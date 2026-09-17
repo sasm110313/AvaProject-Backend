@@ -1,6 +1,20 @@
 from django.contrib import admin
+from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 
-from .models import Article, ArticleVideo, Customer, Order, OrderItem, OtpCode, Product, ProductImage
+from .models import (
+    Address,
+    Article,
+    ArticleVideo,
+    Cart,
+    CartItem,
+    Customer,
+    Order,
+    OrderItem,
+    OtpCode,
+    Product,
+    ProductImage,
+    User,
+)
 
 
 class ProductImageInline(admin.TabularInline):
@@ -13,9 +27,36 @@ class OrderItemInline(admin.TabularInline):
     extra = 0
 
 
+class CartItemInline(admin.TabularInline):
+    model = CartItem
+    extra = 0
+
+
 class ArticleVideoInline(admin.TabularInline):
     model = ArticleVideo
     extra = 0
+
+
+@admin.register(User)
+class UserAdmin(BaseUserAdmin):
+    list_display = ["phone", "name", "email", "is_staff", "is_active", "created_at"]
+    list_filter = ["is_staff", "is_active"]
+    search_fields = ["phone", "name", "email"]
+    ordering = ["-id"]
+    fieldsets = [
+        (None, {"fields": ["phone", "password"]}),
+        ("اطلاعات فردی", {"fields": ["name", "email", "national_code", "birth_date", "gender"]}),
+        ("دسترسی‌ها", {"fields": ["is_active", "is_staff", "is_superuser", "groups", "user_permissions"]}),
+    ]
+    add_fieldsets = [
+        (None, {"classes": ["wide"], "fields": ["phone", "password"]}),
+    ]
+
+
+@admin.register(Address)
+class AddressAdmin(admin.ModelAdmin):
+    list_display = ["user", "title", "postal_code", "is_default", "created_at"]
+    search_fields = ["user__phone", "user__name", "title", "address"]
 
 
 @admin.register(Product)
@@ -39,9 +80,15 @@ class OrderItemAdmin(admin.ModelAdmin):
     list_display = ["order", "product_name", "price", "quantity"]
 
 
+@admin.register(Cart)
+class CartAdmin(admin.ModelAdmin):
+    list_display = ["id", "user", "session_key", "total_items", "total_price", "updated_at"]
+    inlines = [CartItemInline]
+
+
 @admin.register(Customer)
 class CustomerAdmin(admin.ModelAdmin):
-    list_display = ["id", "name", "phone", "email", "joined"]
+    list_display = ["id", "name", "phone", "email", "orders_count", "total_spent", "joined"]
     search_fields = ["name", "phone", "email"]
 
 
