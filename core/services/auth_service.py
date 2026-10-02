@@ -42,6 +42,9 @@ class AuthService:
         code = str(random.randint(10000, 99999))
         OtpCode.objects.create(phone=phone, code=code)
 
+        from core.services.sms_service import SmsService
+        SmsService.send_otp(phone, code)
+
         result: dict[str, Any] = {"success": True}
         if settings.DEBUG:
             result["devCode"] = code

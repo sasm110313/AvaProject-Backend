@@ -377,3 +377,100 @@ Authorization: Bearer <access_token>
 | `401 Unauthorized` | عدم احراز هویت | عدم ارسال یا نامعتبر بودن توکن JWT |
 | `404 Not Found` | یافت نشد | محصول، سفارش یا مقاله پیدا نشد |
 | `500 Server Error` | خطای سرور | خطاهای غیرمنتظره بک‌اند |
+
+---
+
+## ۱۱. سیستم‌های پیشرفته فروشگاهی جدید (E-Commerce Extensions)
+
+### ۱۱.۱. مستندات تعاملی Swagger و OpenAPI
+- **رابط وب Swagger UI:** `http://localhost:4000/api/docs/`
+- **رابط وب Redoc:** `http://localhost:4000/api/redoc/`
+- **فایل اسکیما OpenAPI:** `http://localhost:4000/api/schema/`
+
+### ۱۱.۲. کدهای تخفیف و کوپن (Coupons)
+- **بررسی و محاسبه تخفیف:** `POST /coupons/validate`
+  - Body: `{"code": "WELCOME", "total_amount": 2500000}`
+  - خروجی: مبلغ تخفیف محاسبه‌شده و مبلغ نهایی پس از تخفیف.
+- **اعمال در سبد خرید:** `POST /cart/coupon` با بدنه `{"code": "WELCOME"}`
+- **حذف کوپن از سبد خرید:** `DELETE /cart/coupon`
+
+### ۱۱.۳. درگاه پرداخت الکترونیک (Payment Gateway)
+- **درخواست پرداخت سفارش:** `POST /payment/request`
+  - Body: `{"order_code": "ORD-9001", "gateway": "mock"}`
+  - خروجی: `payment_url` جهت هدایت کاربر به درگاه (در محیط توسعه به صفحه شبیه‌ساز داخلی هدایت می‌شود).
+- **تأییدیه بازگشت از درگاه:** `GET/POST /payment/verify?Authority=...&Status=OK`
+  - وضعیت پرداخت سفارش را به «پرداخت شده» تغییر داده و رسید دیجیتال صادر می‌کند.
+- **شبیه‌ساز پرداخت تستی:** `GET /payment/mock-pay/<authority>`
+
+### ۱۱.۴. نظرات، نقد و بررسی و امتیازدهی به کالا (Reviews)
+- **مشاهده نظرات یک کالا و آمار امتیازات:** `GET /products/:id/reviews`
+- **ثبت نظر جدید:** `POST /products/:id/reviews`
+  - Body:
+  ```json
+  {
+    "rating": 5,
+    "comment": "تفکیک صدای این محصول فوق‌العاده است.",
+    "user_name": "علی رضایی",
+    "pros": ["صدای شفاف", "بیس تفکیک‌شده"],
+    "cons": ["کمی داغ می‌کند"]
+  }
+  ```
+  *(با ثبت هر نظر، میانگین امتیاز کالا در دیتابیس به صورت خودکار به‌روزرسانی می‌شود)*
+
+### ۱۱.۵. پیام‌ها و اعلان‌های کاربر (Notifications)
+برای استفاده در تب «پیام‌ها» در صفحه پروفایل کاربر:
+- **لیست پیام‌ها:** `GET /me/messages` (یا با پارامتر `?phone=0912...`)
+- **خوانده شدن یک پیام:** `PATCH /me/messages/:id/read`
+- **خوانده شدن تمام پیام‌ها:** `POST /me/messages/read-all`
+
+### ۱۱.۶. تاریخچه وضعیت و رهگیری سفارش (Order Tracking & History)
+- **مشاهده تایم‌لاین تغییرات وضعیت سفارش:** `GET /orders/:code/history`
+- **فیلدهای اضافه سفارش:** `tracking_code` (کد رهگیری پستی/تیپاکس)، `shipping_method` (روش ارسال)، `shipping_cost` (هزینه ارسال)، `discount_amount` (مبلغ تخفیف اعمال‌شده).
+
+### ۱۱.۷. فیلترها و مرتب‌سازی پیشرفته محصولات (Catalog Filters)
+- فیلتر بر اساس برند: `GET /products?brand=JBL`
+- فیلتر بازه قیمت: `GET /products?min_price=5000000&max_price=20000000`
+- فقط کالاهای موجود: `GET /products?in_stock=true`
+- فقط کالاهای منتخب/شگفت‌انگیز: `GET /products?is_featured=true`
+- مرتب‌سازی: `GET /products?ordering=price_asc` (ارزان‌ترین)، `price_desc` (گران‌ترین)، `newest` (جدیدترین)، `popular` (محبوب‌ترین)، `rating` (بالاترین امتیاز).
+- دریافت لیست برندهای موجود با تعداد محصولات: `GET /brands`
+
+---
+
+## ۱۲. امکانات تکمیلی فروشگاه پیشرفته (Enterprise Extensions)
+
+### ۱۲.۱. تنوع و ویژگی‌های کالا (Product Variants)
+محصولات می‌توانند دارای انواع تنوع رنگ، امپدانس یا کانکتور باشند.
+- در آبجکت خروجی هر محصول (`GET /products` یا `GET /products/:id`)، فیلد `variants` شامل لیستی از تنوع‌ها است:
+  ```json
+  "variants": [
+    { "id": 1, "title": "مشکی مات", "sku": "HDP-2044-BLK", "price": 8900000, "stock": 15 },
+    { "id": 2, "title": "سفید صدفی", "sku": "HDP-2044-WHT", "price": 9200000, "stock": 8 }
+  ]
+  ```
+
+### ۱۲.۲. پرسش و پاسخ کاربران درباره کالا (Product Q&A)
+- **مشاهده پرسش‌ها و پاسخ‌ها:** `GET /products/:id/questions`
+- **ثبت پرسش جدید:** `POST /products/:id/questions` با بدنه `{"question_text": "آیا کابل تبدیل داخل جعبه است؟"}`
+- **ثبت پاسخ:** `POST /questions/:question_id/answers` با بدنه `{"answer_text": "بله، تبدیل ۶.۳ میلی‌متری موجود است."}`
+
+### ۱۲.۳. کالاهای مرتبط و پیشنهادی (Related Products)
+- **مسیر:** `GET /products/:id/related`
+- کالاهای هم‌دسته یا هم‌برند مشابه را برای بخش «کالاهای پیشنهادی» برمی‌گرداند.
+
+### ۱۲.۴. مقایسه تخصصی کالاها (Product Comparison)
+- **مسیر:** `GET /products/compare?ids=1,2,3`
+- خروجی شامل مشخصات محصولات و تمام کلیدهای فنی مشترک برای ترسیم جدول مقایسه در فرانت‌اند است.
+
+### ۱۲.۵. بنرها و اسلایدرهای صفحه اول (Banners & Hero Sliders)
+- **مسیر:** `GET /banners?type=hero` (یا بدون پارامتر برای دریافت تمام بنرها)
+- برای بارگذاری اسلایدر بالای سایت (`Swiper.jsx`) و بنرهای تبلیغاتی میانی.
+
+### ۱۲.۶. صدور و چاپ فاکتور خرید (Printable Invoice)
+- **مسیر:** `GET /orders/:code/invoice`
+- فاکتور رسمی زیبا و استاندارد فارسی با استایل مناسب پرینت مستقیم (`Ctrl+P` یا دکمه «چاپ فاکتور»).
+
+### ۱۲.۷. خبرنامه، تماس با ما و تنظیمات فروشگاه
+- **ثبت پیام تماس با ما:** `POST /contact` با بدنه `{"name": "...", "phone": "...", "subject": "...", "message": "..."}`
+- **عضویت در خبرنامه:** `POST /newsletter/subscribe` با بدنه `{"email_or_phone": "0912..."}`
+- **اطلاعات تماس و تنظیمات فروشگاه:** `GET /site-settings` (شماره پشتیبانی، شبکه‌های اجتماعی، سقف ارسال رایگان)

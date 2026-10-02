@@ -1,9 +1,9 @@
 from typing import Any
-
 from django.core.exceptions import ValidationError
 from django.db import transaction
 
-from core.models import Cart, CartItem, Product, User
+from core.models import Cart, CartItem, Coupon, Product, User
+from core.services.coupon_service import CouponService
 
 
 class CartService:
@@ -34,7 +34,7 @@ class CartService:
             raise ValidationError("تعداد نامعتبر است")
 
         try:
-            product = Product.objects.get(pk=product_id)
+            product = Product.objects.get(pk=product_id, is_active=True)
         except Product.DoesNotExist:
             raise ValidationError("محصول مورد نظر یافت نشد")
 
@@ -88,6 +88,30 @@ class CartService:
     @classmethod
     def clear_cart(cls, cart: Cart) -> None:
         cart.items.all().delete()
+        if cart.coupon:
+            cart.coupon = None
+            cart.save(update_fields=["coupon"])
+
+    @classmethod
+    def apply_coupon(cls, cart: Cart, code: str, user: User | None = None) -> dict[str, Any]:
+        raw_total = cart.total_price
+        if raw_total <= 0:
+            raise ValidationError("سبد خرید خالی است")
+
+        res = CouponService.validate_coupon(
+            code=code,
+            user=user or cart.user,
+            total_amount=raw_total,
+        )
+        cart.coupon = res["coupon"]
+        cart.save(update_fields=["coupon"])
+        return res
+
+    @classmethod
+    def remove_coupon(cls, cart: Cart) -> None:
+        if cart.coupon:
+            cart.coupon = None
+            cart.save(update_fields=["coupon"])
 
     @classmethod
     @transaction.atomic
@@ -110,6 +134,10 @@ class CartService:
                 combined = min(u_item.quantity + g_item.quantity, product.stock)
                 u_item.quantity = combined
                 u_item.save(update_fields=["quantity", "updated_at"])
+
+        if guest_cart.coupon and not user_cart.coupon:
+            user_cart.coupon = guest_cart.coupon
+            user_cart.save(update_fields=["coupon"])
 
         guest_cart.delete()
         return user_cart
@@ -141,9 +169,36 @@ class CartService:
                 }
             )
 
+        total_price = cart.total_price
+        discount_amount = 0
+        coupon_data = None
+
+        if cart.coupon:
+            if cart.coupon.is_valid_now():
+                if cart.coupon.discount_type == "percent":
+                    calc = (total_price * cart.coupon.discount_value) // 100
+                    discount_amount = min(calc, cart.coupon.max_discount_amount or calc)
+                else:
+                    discount_amount = min(cart.coupon.discount_value, total_price)
+                coupon_data = {
+                    "code": cart.coupon.code,
+                    "discount_value": cart.coupon.discount_value,
+                    "discount_type": cart.coupon.discount_type,
+                    "discount_amount": discount_amount,
+                }
+            else:
+                cart.coupon = None
+                cart.save(update_fields=["coupon"])
+
+        final_price = max(0, total_price - discount_amount)
+
         return {
             "id": cart.id,
             "total_items": cart.total_items,
-            "total_price": cart.total_price,
+            "total_price": total_price,
+            "subtotal": total_price,
+            "discount_amount": discount_amount,
+            "final_price": final_price,
+            "coupon": coupon_data,
             "items": items_data,
         }

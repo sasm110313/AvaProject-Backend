@@ -1,11 +1,12 @@
 from typing import Any
-
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import F
 
 from core.jalali import today_jalali
-from core.models import Cart, Order, OrderItem, Product, User
+from core.models import Cart, Order, OrderItem, OrderStatusHistory, Product, User
+from core.services.coupon_service import CouponService
+from core.services.notification_service import NotificationService
 
 
 class OrderService:
@@ -35,15 +36,19 @@ class OrderService:
         user: User | None = None,
         status: str = "در انتظار پردازش",
         payment: str = "در انتظار",
+        coupon_code: str = "",
+        shipping_cost: int = 0,
+        shipping_method: str = "پست پیشتاز",
+        customer_notes: str = "",
     ) -> Order:
         if not items_data:
             raise ValidationError("حداقل یک قلم کالا در سفارش الزامی است")
 
         if status not in Order.ORDER_STATUSES:
-            raise ValidationError("وضعیت سفارش نامعتبر است")
+            raise ValidationError(f"وضعیت سفارش نامعتبر است. وضعیت‌های مجاز: {', '.join(Order.ORDER_STATUSES)}")
 
         if payment not in Order.PAYMENT_STATUSES:
-            raise ValidationError("وضعیت پرداخت نامعتبر است")
+            raise ValidationError(f"وضعیت پرداخت نامعتبر است. وضعیت‌های مجاز: {', '.join(Order.PAYMENT_STATUSES)}")
 
         quantities: dict[int, int] = {}
         for item in items_data:
@@ -69,11 +74,28 @@ class OrderService:
                                 f"موجودی کالای «{product.name}» کافی نیست (موجودی: {product.stock})"
                             )
 
+                    # Deduct stock and increment sales_count
                     for product in products:
                         required_qty = quantities[product.id]
                         Product.objects.filter(id=product.id).update(
-                            stock=F("stock") - required_qty
+                            stock=F("stock") - required_qty,
+                            sales_count=F("sales_count") + required_qty,
                         )
+
+                    # Calculate total before discounts
+                    raw_total = sum(p.price * quantities[p.id] for p in products)
+
+                    # Check coupon if provided
+                    discount_amount = 0
+                    valid_coupon = None
+                    if coupon_code:
+                        coupon_res = CouponService.validate_coupon(
+                            code=coupon_code,
+                            user=user,
+                            total_amount=raw_total,
+                        )
+                        discount_amount = coupon_res["discount_amount"]
+                        valid_coupon = coupon_res["coupon"]
 
                     code = cls._generate_order_code()
                     order = Order.objects.create(
@@ -86,6 +108,11 @@ class OrderService:
                         date=today_jalali(),
                         status=status,
                         payment=payment,
+                        shipping_cost=shipping_cost,
+                        shipping_method=shipping_method,
+                        discount_amount=discount_amount,
+                        coupon_code=valid_coupon.code if valid_coupon else "",
+                        customer_notes=customer_notes.strip(),
                     )
 
                     for product in products:
@@ -96,6 +123,30 @@ class OrderService:
                             price=product.price,
                             quantity=quantities[product.id],
                         )
+
+                    if valid_coupon:
+                        CouponService.apply_to_order(
+                            coupon=valid_coupon,
+                            order=order,
+                            user=user,
+                            discount_amount=discount_amount,
+                        )
+
+                    # Initial status history
+                    OrderStatusHistory.objects.create(
+                        order=order,
+                        from_status="",
+                        to_status=status,
+                        comment="ثبت سفارش اولیه",
+                    )
+
+                    # Send notification to user
+                    NotificationService.notify_order_status(order)
+
+                    # Send SMS confirmation
+                    if order.phone:
+                        from core.services.sms_service import SmsService
+                        SmsService.send_order_placed(order.phone, order.code, order.total)
 
                     return order
             except IntegrityError:
@@ -113,10 +164,15 @@ class OrderService:
         address: str = "",
         email: str = "",
         user: User | None = None,
+        coupon_code: str = "",
+        shipping_method: str = "پست پیشتاز",
+        customer_notes: str = "",
     ) -> Order:
         items = list(cart.items.all())
         if not items:
             raise ValidationError("سبد خرید خالی است")
+
+        effective_coupon = coupon_code or (cart.coupon.code if cart.coupon else "")
 
         items_data = [
             {"product_id": item.product_id, "quantity": item.quantity}
@@ -130,28 +186,53 @@ class OrderService:
             address=address,
             email=email,
             user=user or cart.user,
+            coupon_code=effective_coupon,
+            shipping_method=shipping_method,
+            customer_notes=customer_notes,
         )
 
         cart.items.all().delete()
+        if cart.coupon:
+            cart.coupon = None
+            cart.save(update_fields=["coupon"])
+
         return order
 
     @classmethod
     @transaction.atomic
-    def update_status(cls, order: Order, new_status: str) -> Order:
+    def update_status(cls, order: Order, new_status: str, comment: str = "") -> Order:
         if new_status not in Order.ORDER_STATUSES:
-            raise ValidationError("وضعیت مشخص شده معتبر نیست")
+            raise ValidationError(
+                f"وضعیت مشخص شده معتبر نیست. وضعیت‌های مجاز: {', '.join(Order.ORDER_STATUSES)}"
+            )
 
         old_status = order.status
         if old_status == new_status:
             return order
 
-        if new_status == "لغو شده" and old_status != "لغو شده":
+        # Restore stock if canceled or returned
+        if new_status in ("لغو شده", "مرجوع شده") and old_status not in ("لغو شده", "مرجوع شده"):
             for item in order.order_items.all():
                 if item.product_id:
                     Product.objects.filter(id=item.product_id).update(
-                        stock=F("stock") + item.quantity
+                        stock=F("stock") + item.quantity,
+                        sales_count=F("sales_count") - item.quantity,
                     )
 
         order.status = new_status
         order.save(update_fields=["status"])
+
+        OrderStatusHistory.objects.create(
+            order=order,
+            from_status=old_status,
+            to_status=new_status,
+            comment=comment or f"تغییر وضعیت به {new_status}",
+        )
+
+        NotificationService.notify_order_status(order)
+
+        if order.phone:
+            from core.services.sms_service import SmsService
+            SmsService.send_order_status(order.phone, order.code, new_status, order.tracking_code)
+
         return order
