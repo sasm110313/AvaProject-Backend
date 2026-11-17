@@ -1,7 +1,7 @@
 from typing import Any
 
 from django.core.exceptions import ValidationError
-from django.db.models import Count, Q
+from django.db.models import Count, F, Q
 from django.http import HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from drf_spectacular.utils import extend_schema, OpenApiParameter
@@ -240,6 +240,128 @@ def compare_products(request: Any) -> Response:
     })
 
 
+@extend_schema(summary="لیست محصولات منتخب / ویژه (اسلایدرها و صفحه اول)")
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def products_featured(request: Any) -> Response:
+    limit = int(request.query_params.get("limit", 12))
+    category = request.query_params.get("category")
+    qs = Product.objects.filter(is_active=True, is_featured=True).prefetch_related("product_images", "reviews")
+    if category:
+        qs = qs.filter(Q(category__iexact=category) | Q(category_rel__slug=category))
+    qs = qs.order_by("-id")[:limit]
+    serializer = ProductSerializer(qs, many=True, context={"request": request})
+    return Response(serializer.data)
+
+
+@extend_schema(summary="لیست پیشنهادات شگفت‌انگیز / دارای تخفیف ویژه")
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def products_special_offers(request: Any) -> Response:
+    limit = int(request.query_params.get("limit", 12))
+    category = request.query_params.get("category")
+    qs = Product.objects.filter(
+        is_active=True,
+        old_price__isnull=False,
+        old_price__gt=F("price"),
+        stock__gt=0,
+    ).prefetch_related("product_images", "reviews")
+    if category:
+        qs = qs.filter(Q(category__iexact=category) | Q(category_rel__slug=category))
+    qs = qs.order_by("-id")[:limit]
+    serializer = ProductSerializer(qs, many=True, context={"request": request})
+    return Response(serializer.data)
+
+
+@extend_schema(summary="لیست پرفروش‌ترین محصولات")
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def products_best_sellers(request: Any) -> Response:
+    limit = int(request.query_params.get("limit", 12))
+    category = request.query_params.get("category")
+    qs = Product.objects.filter(is_active=True, stock__gt=0).prefetch_related(
+        "product_images", "reviews"
+    )
+    if category:
+        qs = qs.filter(Q(category__iexact=category) | Q(category_rel__slug=category))
+    qs = qs.order_by("-sales_count", "-views_count", "-id")[:limit]
+    serializer = ProductSerializer(qs, many=True, context={"request": request})
+    return Response(serializer.data)
+
+
+@extend_schema(summary="لیست جدیدترین محصولات")
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def products_new_arrivals(request: Any) -> Response:
+    limit = int(request.query_params.get("limit", 12))
+    category = request.query_params.get("category")
+    qs = Product.objects.filter(is_active=True, stock__gt=0).prefetch_related(
+        "product_images", "reviews"
+    )
+    if category:
+        qs = qs.filter(Q(category__iexact=category) | Q(category_rel__slug=category))
+    qs = qs.order_by("-id")[:limit]
+    serializer = ProductSerializer(qs, many=True, context={"request": request})
+    return Response(serializer.data)
+
+
+@extend_schema(summary="تغییر وضعیت ویژه / منتخب بودن محصول")
+@api_view(["PATCH"])
+@permission_classes([AllowAny])
+@csrf_exempt
+def product_toggle_featured(request: Any, pk: int) -> Response:
+    product = Product.objects.filter(pk=pk).first()
+    if not product:
+        return Response({"error": "محصول یافت نشد"}, status=status.HTTP_404_NOT_FOUND)
+
+    is_featured = request.data.get("is_featured")
+    if is_featured is not None:
+        product.is_featured = bool(is_featured)
+    else:
+        product.is_featured = not product.is_featured
+    product.save(update_fields=["is_featured"])
+    return Response({
+        "id": product.id,
+        "name": product.name,
+        "is_featured": product.is_featured,
+        "Empressive": product.is_featured,
+    })
+
+
+@extend_schema(summary="عملیات گروهی روی محصولات برای پنل ادمین")
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@csrf_exempt
+def product_batch_action(request: Any) -> Response:
+    ids = request.data.get("ids", [])
+    action = request.data.get("action", "")
+    if not isinstance(ids, list) or not ids:
+        return Response({"error": "لیست شناسه‌های محصول الزامی است"}, status=status.HTTP_400_BAD_REQUEST)
+
+    qs = Product.objects.filter(id__in=ids)
+    count = qs.count()
+
+    if action == "set_featured":
+        qs.update(is_featured=True)
+    elif action == "unset_featured":
+        qs.update(is_featured=False)
+    elif action == "set_active":
+        qs.update(is_active=True)
+    elif action == "set_inactive":
+        qs.update(is_active=False)
+    elif action == "change_category":
+        category = request.data.get("category", "")
+        if category:
+            qs.update(category=category)
+    elif action == "delete":
+        for p in qs:
+            p.delete()
+    else:
+        return Response({"error": "عملیات نامعتبر است"}, status=status.HTTP_400_BAD_REQUEST)
+
+    return Response({"success": True, "action": action, "affected_count": count})
+
+
 # ============================================================================
 # PRODUCT REVIEWS & QUESTIONS
 # ============================================================================
@@ -453,8 +575,8 @@ def order_list(request: Any) -> Response:
         return Response({"error": str(exc.message)}, status=status.HTTP_400_BAD_REQUEST)
 
 
-@extend_schema(summary="مشاهده یا حذف سفارش با کد یا شناسه")
-@api_view(["GET", "DELETE"])
+@extend_schema(summary="مشاهده، ویرایش یا حذف سفارش با کد یا شناسه")
+@api_view(["GET", "PATCH", "DELETE"])
 @permission_classes([AllowAny])
 @csrf_exempt
 def order_detail(request: Any, code: str) -> Response:
@@ -467,6 +589,25 @@ def order_detail(request: Any, code: str) -> Response:
     if request.method == "DELETE":
         order.delete()
         return Response({"success": True})
+
+    if request.method == "PATCH":
+        data = request.data
+        if "customer_notes" in data:
+            order.customer_notes = str(data["customer_notes"]).strip()
+        if "address" in data:
+            order.address = str(data["address"]).strip()
+        if "phone" in data:
+            order.phone = str(data["phone"]).strip()
+        if "tracking_code" in data:
+            order.tracking_code = str(data["tracking_code"]).strip()
+        if "shipping_method" in data:
+            order.shipping_method = str(data["shipping_method"]).strip()
+        if "status" in data and data["status"] in Order.ORDER_STATUSES:
+            OrderService.update_status(order, data["status"], comment=data.get("comment", "ویرایش سفارش"))
+        else:
+            order.save()
+        return Response(OrderSerializer(order).data)
+
     return Response(OrderSerializer(order).data)
 
 
@@ -490,6 +631,29 @@ def order_status(request: Any, code: str) -> Response:
 
     try:
         updated = OrderService.update_status(order, status_value, comment=comment)
+        return Response(OrderSerializer(updated).data)
+    except ValidationError as exc:
+        return Response({"error": str(exc.message)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+@extend_schema(summary="لغو سفارش")
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@csrf_exempt
+def order_cancel(request: Any, code: str) -> Response:
+    order = Order.objects.filter(code=code).first()
+    if not order and code.isdigit():
+        order = Order.objects.filter(id=int(code)).first()
+    if not order:
+        return Response({"error": "سفارش یافت نشد"}, status=status.HTTP_404_NOT_FOUND)
+    if order.status in ("تحویل شده", "مرجوع شده"):
+        return Response(
+            {"error": "این سفارش به دلیل تحویل یا مرجوع شدن قابل لغو نیست"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    reason = request.data.get("reason", "لغو توسط مشتری")
+    try:
+        updated = OrderService.update_status(order, "لغو شده", comment=reason)
         return Response(OrderSerializer(updated).data)
     except ValidationError as exc:
         return Response({"error": str(exc.message)}, status=status.HTTP_400_BAD_REQUEST)
@@ -781,15 +945,73 @@ def mock_payment_page(request: Any, authority: str) -> HttpResponse:
 # BANNERS & HOMEPAGE SLIDERS
 # ============================================================================
 
-@extend_schema(summary="لیست بنرها و اسلایدرهای صفحه اول")
-@api_view(["GET"])
+@extend_schema(summary="لیست یا ایجاد بنر / اسلاید شو")
+@api_view(["GET", "POST"])
 @permission_classes([AllowAny])
+@csrf_exempt
 def banner_list(request: Any) -> Response:
-    b_type = request.query_params.get("type")
-    qs = Banner.objects.filter(is_active=True)
-    if b_type:
-        qs = qs.filter(banner_type=b_type)
-    return Response(BannerSerializer(qs, many=True, context={"request": request}).data)
+    if request.method == "GET":
+        b_type = request.query_params.get("type")
+        all_banners = request.query_params.get("all") in ("true", "1")
+        qs = Banner.objects.all() if all_banners else Banner.objects.filter(is_active=True)
+        if b_type:
+            qs = qs.filter(banner_type=b_type)
+        return Response(BannerSerializer(qs, many=True, context={"request": request}).data)
+
+    serializer = BannerSerializer(data=request.data, context={"request": request})
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@extend_schema(summary="جزئیات، ویرایش یا حذف بنر / اسلاید شو")
+@api_view(["GET", "PUT", "PATCH", "DELETE"])
+@permission_classes([AllowAny])
+@csrf_exempt
+def banner_detail(request: Any, pk: int) -> Response:
+    banner = Banner.objects.filter(pk=pk).first()
+    if not banner:
+        return Response({"error": "بنر یافت نشد"}, status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == "GET":
+        return Response(BannerSerializer(banner, context={"request": request}).data)
+
+    if request.method == "DELETE":
+        if banner.image:
+            banner.image.delete(save=False)
+        banner.delete()
+        return Response({"success": True})
+
+    old_image = banner.image
+    serializer = BannerSerializer(
+        banner,
+        data=request.data,
+        partial=(request.method == "PATCH"),
+        context={"request": request},
+    )
+    if serializer.is_valid():
+        new_img = request.FILES.get("image")
+        if new_img and old_image and old_image.name != new_img.name:
+            old_image.delete(save=False)
+        serializer.save()
+        return Response(serializer.data)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@extend_schema(summary="تغییر ترتیب نمایش اسلایدها و بنرها")
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@csrf_exempt
+def banner_reorder(request: Any) -> Response:
+    order_data = request.data.get("order", [])
+    if isinstance(order_data, list):
+        for idx, item in enumerate(order_data):
+            if isinstance(item, dict) and "id" in item:
+                Banner.objects.filter(id=item["id"]).update(display_order=item.get("display_order", idx))
+            elif isinstance(item, int):
+                Banner.objects.filter(id=item).update(display_order=idx)
+    return Response({"success": True, "message": "ترتیب اسلایدها به‌روزرسانی شد"})
 
 
 # ============================================================================
@@ -821,12 +1043,24 @@ def newsletter_subscribe(request: Any) -> Response:
     return Response({"success": True, "message": "عضویت شما در خبرنامه با موفقیت انجام شد."})
 
 
-@extend_schema(summary="مشاهده تنظیمات و اطلاعات تماس فروشگاه")
-@api_view(["GET"])
+@extend_schema(summary="مشاهده یا ویرایش تنظیمات فروشگاه")
+@api_view(["GET", "PUT", "PATCH"])
 @permission_classes([AllowAny])
+@csrf_exempt
 def site_settings_view(request: Any) -> Response:
     settings_obj = SiteSetting.get_settings()
-    return Response(SiteSettingSerializer(settings_obj).data)
+    if request.method == "GET":
+        return Response(SiteSettingSerializer(settings_obj).data)
+
+    serializer = SiteSettingSerializer(
+        settings_obj,
+        data=request.data,
+        partial=(request.method == "PATCH"),
+    )
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 # ============================================================================
@@ -839,11 +1073,49 @@ def site_settings_view(request: Any) -> Response:
 @csrf_exempt
 def customer_list(request: Any) -> Response:
     customers = User.objects.filter(is_staff=False).order_by("-id")
+    search = request.query_params.get("search")
+    if search:
+        search = search.strip()
+        customers = customers.filter(
+            Q(name__icontains=search) | Q(phone__icontains=search) | Q(email__icontains=search)
+        )
+
     paginator = ConditionalPageNumberPagination()
     page = paginator.paginate_queryset(customers, request)
     if page is not None:
         return paginator.get_paginated_response(CustomerSerializer(page, many=True).data)
     return Response(CustomerSerializer(customers, many=True).data)
+
+
+@extend_schema(summary="مشاهده جزئیات یا ویرایش مشتری در پنل ادمین")
+@api_view(["GET", "PATCH"])
+@permission_classes([AllowAny])
+@csrf_exempt
+def customer_detail(request: Any, pk: int) -> Response:
+    user = User.objects.filter(pk=pk).first()
+    if not user:
+        return Response({"error": "کاربر یافت نشد"}, status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == "GET":
+        orders = Order.objects.filter(Q(user=user) | Q(phone=user.phone)).prefetch_related("order_items").order_by("-id")
+        addresses = Address.objects.filter(user=user)
+        return Response({
+            "customer": CustomerSerializer(user).data,
+            "addresses": AddressSerializer(addresses, many=True).data,
+            "orders": OrderSerializer(orders, many=True).data,
+        })
+
+    data = request.data
+    if "is_active" in data:
+        user.is_active = bool(data["is_active"])
+    if "is_staff" in data:
+        user.is_staff = bool(data["is_staff"])
+    if "name" in data:
+        user.name = str(data["name"]).strip()
+    if "email" in data:
+        user.email = str(data["email"]).strip()
+    user.save()
+    return Response(CustomerSerializer(user).data)
 
 
 @extend_schema(summary="مشاهده یا ویرایش پروفایل کاربری")
@@ -1162,6 +1434,7 @@ def cart_view(request: Any) -> Response:
 def cart_add_item(request: Any) -> Response:
     cart = get_request_cart(request)
     product_id = request.data.get("product_id")
+    variant_id = request.data.get("variant_id")
     quantity = int(request.data.get("quantity", 1))
 
     if not product_id:
@@ -1170,7 +1443,8 @@ def cart_add_item(request: Any) -> Response:
         )
 
     try:
-        CartService.add_item(cart, product_id=int(product_id), quantity=quantity)
+        v_id = int(variant_id) if variant_id and str(variant_id).isdigit() else None
+        CartService.add_item(cart, product_id=int(product_id), quantity=quantity, variant_id=v_id)
         summary = CartService.get_cart_summary(cart, request=request)
         return Response(summary, status=status.HTTP_201_CREATED)
     except ValidationError as exc:
@@ -1183,14 +1457,17 @@ def cart_add_item(request: Any) -> Response:
 @csrf_exempt
 def cart_item_detail(request: Any, product_id: int) -> Response:
     cart = get_request_cart(request)
+    variant_id = request.data.get("variant_id") or request.query_params.get("variant_id")
+    v_id = int(variant_id) if variant_id and str(variant_id).isdigit() else None
+
     if request.method == "DELETE":
-        CartService.remove_item(cart, product_id=product_id)
+        CartService.remove_item(cart, product_id=product_id, variant_id=v_id)
         summary = CartService.get_cart_summary(cart, request=request)
         return Response(summary)
 
     quantity = int(request.data.get("quantity", 1))
     try:
-        CartService.update_item(cart, product_id=product_id, quantity=quantity)
+        CartService.update_item(cart, product_id=product_id, quantity=quantity, variant_id=v_id)
         summary = CartService.get_cart_summary(cart, request=request)
         return Response(summary)
     except ValidationError as exc:
@@ -1249,7 +1526,17 @@ def cart_checkout(request: Any) -> Response:
             shipping_method=shipping_method,
             customer_notes=customer_notes,
         )
-        return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
+        order_data = OrderSerializer(order).data
+        if request.data.get("auto_pay"):
+            gateway = request.data.get("gateway", "mock")
+            payment_info = PaymentService.initiate_payment(
+                order=order,
+                gateway=gateway,
+                user=request.user if request.user.is_authenticated else None,
+            )
+            order_data["payment"] = payment_info
+
+        return Response(order_data, status=status.HTTP_201_CREATED)
     except ValidationError as exc:
         return Response({"error": str(exc.message)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1424,3 +1711,204 @@ def favorite_view(request: Any, product_id: int | None = None) -> Response:
 def dashboard_metrics(request: Any) -> Response:
     metrics = AnalyticsService.get_dashboard_metrics()
     return Response(metrics)
+
+
+# ============================================================================
+# PRODUCT VARIANTS
+# ============================================================================
+
+@extend_schema(summary="لیست یا ایجاد تنوع برای محصول")
+@api_view(["GET", "POST"])
+@permission_classes([AllowAny])
+@csrf_exempt
+def product_variants(request: Any, pk: int) -> Response:
+    product = Product.objects.filter(pk=pk).first()
+    if not product:
+        return Response({"error": "محصول یافت نشد"}, status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == "GET":
+        variants = product.variants.all()
+        return Response(ProductVariantSerializer(variants, many=True).data)
+
+    data = request.data
+    title = str(data.get("title", "")).strip()
+    if not title:
+        return Response({"error": "عنوان تنوع کالا الزامی است"}, status=status.HTTP_400_BAD_REQUEST)
+
+    sku = str(data.get("sku", "")).strip()
+    if not sku:
+        sku = f"{product.sku}-VAR-{product.variants.count() + 1}"
+
+    price_override = data.get("price_override")
+    price_override = int(price_override) if price_override and str(price_override).isdigit() else None
+    stock = int(data.get("stock", 0))
+
+    variant = ProductVariant.objects.create(
+        product=product,
+        title=title,
+        sku=sku,
+        price_override=price_override,
+        stock=stock,
+        is_active=bool(data.get("is_active", True)),
+    )
+    return Response(ProductVariantSerializer(variant).data, status=status.HTTP_201_CREATED)
+
+
+@extend_schema(summary="ویرایش یا حذف تنوع محصول")
+@api_view(["PATCH", "DELETE"])
+@permission_classes([AllowAny])
+@csrf_exempt
+def variant_detail(request: Any, pk: int) -> Response:
+    variant = ProductVariant.objects.filter(pk=pk).first()
+    if not variant:
+        return Response({"error": "تنوع کالا یافت نشد"}, status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == "DELETE":
+        variant.delete()
+        return Response({"success": True})
+
+    data = request.data
+    if "title" in data:
+        variant.title = str(data["title"]).strip()
+    if "price_override" in data:
+        po = data["price_override"]
+        variant.price_override = int(po) if po is not None and str(po).isdigit() else None
+    if "stock" in data:
+        variant.stock = max(0, int(data["stock"]))
+    if "is_active" in data:
+        variant.is_active = bool(data["is_active"])
+    variant.save()
+    return Response(ProductVariantSerializer(variant).data)
+
+
+# ============================================================================
+# LOGOUT
+# ============================================================================
+
+@extend_schema(summary="خروج کاربر و ابطال توکن رفرش")
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@csrf_exempt
+def auth_logout(request: Any) -> Response:
+    refresh_token = request.data.get("refresh")
+    if refresh_token:
+        try:
+            from rest_framework_simplejwt.tokens import RefreshToken
+            token = RefreshToken(refresh_token)
+            token.blacklist()
+        except Exception:
+            pass
+    return Response({"success": True, "message": "خروج با موفقیت انجام شد"})
+
+
+# ============================================================================
+# ADMIN EXTENSIONS (COUPONS, REVIEWS, CONTACTS)
+# ============================================================================
+
+@extend_schema(summary="لیست یا ایجاد کوپن‌های تخفیف برای پنل ادمین")
+@api_view(["GET", "POST"])
+@permission_classes([AllowAny])
+@csrf_exempt
+def admin_coupon_list(request: Any) -> Response:
+    if request.method == "GET":
+        coupons = Coupon.objects.all().order_by("-id")
+        return Response(CouponSerializer(coupons, many=True).data)
+
+    serializer = CouponSerializer(data=request.data)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@extend_schema(summary="مشاهده، ویرایش یا حذف کوپن تخفیف")
+@api_view(["GET", "PATCH", "DELETE"])
+@permission_classes([AllowAny])
+@csrf_exempt
+def admin_coupon_detail(request: Any, pk: int) -> Response:
+    coupon = Coupon.objects.filter(pk=pk).first()
+    if not coupon:
+        return Response({"error": "کوپن یافت نشد"}, status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == "GET":
+        return Response(CouponSerializer(coupon).data)
+
+    if request.method == "DELETE":
+        coupon.delete()
+        return Response({"success": True})
+
+    serializer = CouponSerializer(coupon, data=request.data, partial=True)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@extend_schema(summary="لیست نظرات برای مدیریت پنل ادمین")
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def admin_review_list(request: Any) -> Response:
+    qs = ProductReview.objects.select_related("product", "user").order_by("-id")
+    approved = request.query_params.get("approved")
+    if approved in ("true", "1"):
+        qs = qs.filter(is_approved=True)
+    elif approved in ("false", "0"):
+        qs = qs.filter(is_approved=False)
+    return Response(ProductReviewSerializer(qs, many=True).data)
+
+
+@extend_schema(summary="تأیید، رد یا حذف نظر توسط ادمین")
+@api_view(["PATCH", "DELETE"])
+@permission_classes([AllowAny])
+@csrf_exempt
+def admin_review_detail(request: Any, pk: int) -> Response:
+    review = ProductReview.objects.filter(pk=pk).first()
+    if not review:
+        return Response({"error": "نظر یافت نشد"}, status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == "DELETE":
+        prod_id = review.product_id
+        review.delete()
+        from core.services.review_service import ReviewService
+        ReviewService.recalculate_product_rating(prod_id)
+        return Response({"success": True})
+
+    if "is_approved" in request.data:
+        review.is_approved = bool(request.data["is_approved"])
+        review.save(update_fields=["is_approved"])
+        from core.services.review_service import ReviewService
+        ReviewService.recalculate_product_rating(review.product_id)
+
+    return Response(ProductReviewSerializer(review).data)
+
+
+@extend_schema(summary="لیست پیام‌های تماس با ما برای ادمین")
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def admin_contact_list(request: Any) -> Response:
+    qs = ContactMessage.objects.all().order_by("-id")
+    responded = request.query_params.get("responded")
+    if responded in ("true", "1"):
+        qs = qs.filter(is_responded=True)
+    elif responded in ("false", "0"):
+        qs = qs.filter(is_responded=False)
+    return Response(ContactMessageSerializer(qs, many=True).data)
+
+
+@extend_schema(summary="تغییر وضعیت یا حذف پیام تماس با ما")
+@api_view(["PATCH", "DELETE"])
+@permission_classes([AllowAny])
+@csrf_exempt
+def admin_contact_detail(request: Any, pk: int) -> Response:
+    msg = ContactMessage.objects.filter(pk=pk).first()
+    if not msg:
+        return Response({"error": "پیام یافت نشد"}, status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == "DELETE":
+        msg.delete()
+        return Response({"success": True})
+
+    if "is_responded" in request.data:
+        msg.is_responded = bool(request.data["is_responded"])
+        msg.save(update_fields=["is_responded"])
+    return Response(ContactMessageSerializer(msg).data)

@@ -70,6 +70,35 @@ class AnalyticsService:
             for k, v in sorted(sales_by_date.items(), key=lambda x: x[0])
         ]
 
+        from core.jalali import JALALI_MONTHS
+        monthly_map = {m: 0 for m in JALALI_MONTHS}
+        for o in paid_orders:
+            try:
+                parts = o.date.split("/")
+                if len(parts) >= 2:
+                    m_idx = int(parts[1]) - 1
+                    if 0 <= m_idx < 12:
+                        monthly_map[JALALI_MONTHS[m_idx]] += o.total
+            except (ValueError, IndexError):
+                pass
+
+        sales_by_month = [{"month": m, "sales": monthly_map[m]} for m in JALALI_MONTHS]
+
+        from core.models import Category
+        cat_counts = Category.objects.filter(is_active=True).annotate(
+            prod_count=Count("products")
+        ).values("name", "prod_count")
+        category_share = [
+            {"name": item["name"], "value": item["prod_count"]}
+            for item in cat_counts if item["prod_count"] > 0
+        ]
+        if not category_share:
+            cat_counts2 = Product.objects.filter(is_active=True).values("category").annotate(count=Count("id")).order_by("-count")[:6]
+            category_share = [{"name": c["category"] or "سایر", "value": c["count"]} for c in cat_counts2]
+
+        total_inventory_items = sum(p.stock for p in products_qs)
+        total_inventory_value = sum(p.price * p.stock for p in products_qs)
+
         pending_reviews_count = ProductReview.objects.filter(is_approved=False).count()
         unanswered_questions_count = ProductQuestion.objects.filter(answers__isnull=True).count()
         pending_messages_count = ContactMessage.objects.filter(is_responded=False).count()
@@ -84,6 +113,8 @@ class AnalyticsService:
                 "total_products": total_products,
                 "low_stock_count": low_stock_count,
                 "total_customers": total_customers,
+                "total_inventory_items": total_inventory_items,
+                "total_inventory_value": total_inventory_value,
                 "pending_reviews_count": pending_reviews_count,
                 "unanswered_questions_count": unanswered_questions_count,
                 "pending_messages_count": pending_messages_count,
@@ -96,4 +127,6 @@ class AnalyticsService:
             "recent_orders": recent_orders,
             "top_selling_products": top_selling,
             "sales_trend": sorted_trend,
+            "sales_by_month": sales_by_month,
+            "category_share": category_share,
         }

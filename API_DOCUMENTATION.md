@@ -1,6 +1,6 @@
 # راهنمای جامع اتصال و استفاده از API بک‌اند (ویژه توسعه‌دهنده فرانت‌اند)
 
-این مستند راهنمای کامل و گام‌به‌گام اتصال پروژه‌ی فرانت‌اند (React / Vite) به بک‌اند جنگو است. تمام مسیرها (Endpoints)، فرمت درخواست‌ها، نمونه پاسخ‌ها و نکات کلیدی در این سند گردآوری شده‌اند.
+این مستند راهنمای کامل، گام‌به‌گام و استاندارد اتصال پروژه‌ی فرانت‌اند (React / Vite) به بک‌اند جنگو (Django REST Framework) فروشگاه «آوای انعکاس» است. تمام مسیرها (Endpoints)، پارامترها، فرمت داده‌های ارسالی، نمونه پاسخ‌های JSON و راهنمای پیاده‌سازی صفحه به صفحه در این سند گردآوری شده‌اند.
 
 ---
 
@@ -8,24 +8,63 @@
 
 - **آدرس پایه API (Base URL):** `http://localhost:4000/api`
 - **آدرس فایل‌های چندرسانه‌ای (عکس/ویدیو):** `http://localhost:4000/media/...`
-- **تنظیمات CORS:** برای پورت پیش‌فرض فرانت (`http://localhost:5173` و `http://127.0.0.1:5173`) با هدرهای استاندارد و پشتیبانی از Credentials فعال است.
-- **فعال‌سازی در فرانت:** در فایل `Front/AvayEnekas/src/Components/AdminPannel/Api.jsx` کافیست مقدار `USE_MOCK_DATA = false` قرار داده شود.
+- **تنظیمات CORS:** برای پورت‌های محلی فرانت (`http://localhost:5173` و `http://127.0.0.1:5173`) با هدرهای استاندارد، متدهای `GET, POST, PUT, PATCH, DELETE, OPTIONS` و پشتیبانی از Credentials فعال است.
+- **مستندات تعاملی Swagger:** `http://localhost:4000/api/docs/`
+- **مستندات تعاملی Redoc:** `http://localhost:4000/api/redoc/`
+- **فایل اسکیما OpenAPI:** `http://localhost:4000/api/schema/`
+- **ماژول آماده جاوااسکریپت برای فرانت‌اند:** فایل آماده `Front/AvayEnekas/src/api/shopApi.js` تمامی توابع ارتباطی را با مدیریت خودکار توکن و خطایابی فراهم کرده است.
 
 ---
 
-## ۲. احراز هویت و مدیریت نشست (Authentication & JWT)
+## ۲. راهنمای گام‌به‌گام اتصال فرانت‌اند (Step-by-Step Integration Guide)
 
-احراز هویت بر اساس شماره موبایل و کد یک‌بار مصرف (OTP) است. خروجی ورود شامل جفت توکن استاندارد JWT است.
+### قدم ۱: اجرای بک‌اند
+از پوشه اصلی پروژه در ترمینال دستورات زیر را اجرا کنید:
+```bash
+# لینوکس / مک:
+source venv/bin/activate
+python manage.py runserver 4000
 
-### هدر احراز هویت (در صورت لاگین بودن کاربر):
-```http
-Authorization: Bearer <access_token>
+# ویندوز:
+venv\Scripts\activate
+python manage.py runserver 4000
+```
+سپس با مرورگر آدرس `http://localhost:4000/api/products/` را باز کنید تا از صحت عملکرد مطمئن شوید.
+
+---
+
+### قدم ۲: تنظیم متغیر محیطی در فرانت‌اند
+در ریشه پروژه فرانت (`Front/AvayEnekas`) فایل `.env` را بسازید یا ویرایش کنید:
+```env
+VITE_API_BASE_URL=http://localhost:4000/api
+```
+در پنل ادمین (`Front/AvayEnekas/src/Components/AdminPannel/Api.jsx`) نیز متغیر زیر را مقداردهی کنید:
+```javascript
+export const USE_MOCK_DATA = false;
 ```
 
 ---
 
-### ۲.۱. درخواست ارسال کد تایید (OTP)
-- **مسیر:** `POST /auth/send-code`
+### قدم ۳: چرخه احراز هویت با شماره موبایل (OTP & JWT)
+
+سیستم ورود بدون رمز عبور و با ارسال پیامک کد یک‌بار مصرف است:
+
+```
+[کاربر] ---> وارد کردن شماره موبایل ---> POST /api/auth/send-code/
+                                            |
+                                            v
+                                     دریافت پیامک (یا devCode)
+                                            |
+                                            v
+[کاربر] ---> وارد کردن کد تایید    ---> POST /api/auth/verify-code/
+                                            |
+                                            v
+                                     ذخیره access و refresh در localStorage
+                                     + انتقال خودکار سبد مهمان به کاربر
+```
+
+#### ۳.۱. درخواست ارسال کد تایید (OTP)
+- **مسیر:** `POST /api/auth/send-code/`
 - **Body (JSON):**
 ```json
 {
@@ -39,12 +78,10 @@ Authorization: Bearer <access_token>
   "devCode": "54321"
 }
 ```
-> **نکته برای فرانت‌کار:** در محیط توسعه (`DEBUG=True`)، کد ارسال‌شده در کلید `devCode` برگردانده می‌شود تا تست در فرانت بدون نیاز به پنل پیامکی به سادگی انجام شود.
+> **نکته توسعه‌دهنده:** در حالت `DEBUG=True`، کد ارسال‌شده در کلید `devCode` برگردانده می‌شود تا بدون نیاز به پنل پیامکی بتوانید به راحتی در فرانت تست کنید.
 
----
-
-### ۲.۲. بررسی کد تایید و ورود (Verify OTP & Login)
-- **مسیر:** `POST /auth/verify-code`
+#### ۳.۲. بررسی کد تایید و ورود (Verify OTP & Login)
+- **مسیر:** `POST /api/auth/verify-code/`
 - **Body (JSON):**
 ```json
 {
@@ -72,12 +109,10 @@ Authorization: Bearer <access_token>
   }
 }
 ```
-> **نکته سبد خرید:** اگر کاربر پیش از ورود، کالاهایی را به عنوان مهمان به سبد خرید اضافه کرده باشد، با ارسال `session_key` در این درخواست، سبد خرید مهمان به صورت خودکار به حساب کاربری او منتقل می‌شود.
+> **انتقال خودکار سبد مهمان:** با ارسال `session_key` در این درخواست، سبد خرید مهمان به صورت خودکار به حساب کاربری متصل و ادغام می‌شود.
 
----
-
-### ۲.۳. تازه‌سازی توکن (Refresh Token)
-- **مسیر:** `POST /auth/token/refresh`
+#### ۳.۳. رفرش خودکار توکن (Refresh Token)
+- **مسیر:** `POST /api/auth/token/refresh/`
 - **Body (JSON):**
 ```json
 {
@@ -91,386 +126,484 @@ Authorization: Bearer <access_token>
 }
 ```
 
----
-
-## ۳. سبد خرید (Cart Subsystem)
-
-سبد خرید به صورت کامل هم از **کاربران مهمان** و هم از **کاربران لاگین‌شده** پشتیبانی می‌کند.
-
-- **برای کاربر لاگین‌شده:** هدر `Authorization: Bearer <token>` ارسال شود.
-- **برای کاربر مهمان:** هدر `X-Session-Key: <یک رشته دلخواه یا uuid>` یا پارامتر `?session_key=...` ارسال شود.
-
-### ۳.۱. دریافت اطلاعات سبد خرید
-- **مسیر:** `GET /cart`
+#### ۳.۴. خروج از حساب (Logout)
+- **مسیر:** `POST /api/auth/logout/`
+- **Body (JSON):**
+```json
+{
+  "refresh": "eyJhbGciOiJIUzI1NiIsIn..."
+}
+```
 - **Response (200 OK):**
 ```json
 {
-  "id": 1,
+  "success": true,
+  "message": "خروج با موفقیت انجام شد"
+}
+```
+
+---
+
+### قدم ۴: سبد خرید جامع (Cart Subsystem)
+
+سبد خرید به صورت کامل هم از **کاربران مهمان** و هم از **کاربران واردشده** پشتیبانی می‌کند:
+- **برای کاربر لاگین‌شده:** هدر `Authorization: Bearer <access_token>` ارسال شود.
+- **برای کاربر مهمان:** هدر `X-Session-Key: <guest-uuid>` ارسال شود (یا پارامتر `?session_key=...`).
+
+#### ۴.۱. دریافت وضعیت سبد خرید
+- **مسیر:** `GET /api/cart/`
+- **Response (200 OK):**
+```json
+{
+  "id": 12,
   "total_items": 3,
-  "total_price": 25000000,
+  "total_price": 18500000,
+  "subtotal": 18500000,
+  "discount_amount": 500000,
+  "shipping_cost": 0,
+  "free_shipping_threshold": 3000000,
+  "final_price": 18000000,
+  "coupon": {
+    "code": "YALDA",
+    "discount_value": 500000,
+    "discount_type": "fixed",
+    "discount_amount": 500000
+  },
   "items": [
     {
-      "id": 10,
+      "id": 45,
       "product_id": 1,
-      "name": "اسپیکر مانیتورینگ JBL",
-      "sku": "SPK-1001",
-      "price": 12500000,
-      "quantity": 2,
-      "subtotal": 25000000,
-      "stock": 14,
-      "image": "http://localhost:4000/media/products/images/sample.jpg"
+      "name": "پایه وینچ سنگین",
+      "sku": "WINCH-01",
+      "price": 10000000,
+      "quantity": 1,
+      "subtotal": 10000000,
+      "stock": 10,
+      "image": "http://localhost:4000/media/products/images/imported/bebe24e5/01.jpg",
+      "variant": null
     }
   ]
 }
 ```
 
-### ۳.۲. افزودن کالا به سبد خرید
-- **مسیر:** `POST /cart/items`
+#### ۴.۲. افزودن کالا به سبد خرید
+- **مسیر:** `POST /api/cart/items/`
 - **Body (JSON):**
 ```json
 {
   "product_id": 1,
-  "quantity": 1
+  "quantity": 1,
+  "variant_id": null
 }
 ```
-- **Response (201 Created):** آبجکت خلاصه سبد خرید به‌روزرسانی‌شده.
+- **Response (201 Created):** کل آبجکت خلاصه سبد خرید آپدیت‌شده برگردانده می‌شود.
 
-### ۳.۳. تغییر تعداد یا حذف کالا در سبد
-- **تغییر تعداد:** `PATCH /cart/items/<product_id>` با بدنه `{"quantity": 3}` (اگر 0 ارسال شود، کالا حذف می‌شود).
-- **حذف کالا:** `DELETE /cart/items/<product_id>`
-- **خالی کردن کل سبد:** `DELETE /cart`
+#### ۴.۳. تغییر تعداد یا حذف کالا از سبد
+- **تغییر تعداد:** `PATCH /api/cart/items/:product_id/` با بدنه `{"quantity": 2, "variant_id": null}`
+- **حذف کالا:** `DELETE /api/cart/items/:product_id/?variant_id=...`
+- **خالی کردن کل سبد:** `DELETE /api/cart/`
 
-### ۳.۴. تسویه حساب مستقیم سبد خرید (Checkout Cart)
-- **مسیر:** `POST /cart/checkout`
+#### ۴.۴. اعمال یا حذف کد تخفیف
+- **اعمال کوپن:** `POST /api/cart/coupon/` با بدنه `{"code": "NOROOZ"}`
+- **حذف کوپن:** `DELETE /api/cart/coupon/`
+
+#### ۴.۵. تسویه حساب و تبدیل سبد به سفارش
+- **مسیر:** `POST /api/cart/checkout/`
 - **Body (JSON):**
 ```json
 {
-  "customer": "علی محمدی",
+  "customer": "رضا محمدی",
   "phone": "09121234567",
-  "address": "تهران، خیابان ولیعصر، پلاک ۱",
-  "email": "ali@example.com"
+  "address": "تهران، خیابان ولیعصر، پلاک ۱۲",
+  "email": "reza@example.com",
+  "shipping_method": "پست پیشتاز",
+  "customer_notes": "لطفاً زنگ واحد ۳ را بزنید",
+  "auto_pay": true,
+  "gateway": "mock"
 }
 ```
-- **Response (201 Created):** آبجکت سفارش ایجاد‌شده با شماره سفارش (`code`). در این مرحله سبد خرید به صورت خودکار خالی شده و از موجودی انبار کسر می‌گردد.
+> **نکته کاربردی:** اگر `auto_pay: true` ارسال شود، هم‌زمان اطلاعات پرداخت در کلید `payment` برگردانده می‌شود و نیازی به فراخوانی مجدد نیست.
 
----
-
-## ۴. محصولات و کاتالوگ (Products)
-
-این بخش با پنل ادمین فرانت (`AdminPannel/Api.jsx`) و همچنین کاتالوگ صفحه اصلی و سوایپرها (`ProductData.js`) سازگاری دوطرفه دارد.
-
-### ۴.۱. لیست محصولات
-- **مسیر:** `GET /products`
-- **پارامترهای اختیاری فیلتر:**
-  - `?category=اسپیکر`
-  - `?search=JBL`
-- **نمونه آیتم در آرایه خروجی:**
+- **Response (201 Created):**
 ```json
 {
-  "id": 1,
-  "name": "اسپیکر مانیتورینگ استودیویی JBL 305P",
-  "title": "اسپیکر مانیتورینگ استودیویی JBL 305P",
-  "subtitle": "JBL",
-  "category": "اسپیکر",
-  "sku": "SPK-1001",
-  "price": 12500000,
-  "oldPrice": 14000000,
-  "discount": 11,
-  "rating": 4.8,
-  "Empressive": true,
-  "stock": 14,
-  "status": "فعال",
-  "threshold": 5,
-  "images": [
-    {
-      "id": 1,
-      "url": "http://localhost:4000/media/products/images/...",
-      "name": "jbl-front.jpg"
-    }
-  ],
-  "video": {
-    "url": "http://localhost:4000/media/products/videos/...",
-    "name": "preview.mp4"
+  "id": 14,
+  "code": "ORD-9012",
+  "customer": "رضا محمدی",
+  "phone": "09121234567",
+  "status": "در انتظار پردازش",
+  "payment": "در انتظار",
+  "total": 18000000,
+  "shipping_cost": 0,
+  "discount_amount": 500000,
+  "payment": {
+    "payment_url": "/api/payment/mock-pay/AUTH-A1B2C3D4",
+    "authority": "AUTH-A1B2C3D4",
+    "amount": 18000000,
+    "order_code": "ORD-9012"
   }
 }
 ```
 
-### ۴.۲. جزئیات، ایجاد، ویرایش و حذف محصول
-- **جزئیات محصول:** `GET /products/:id`
-- **ایجاد محصول:** `POST /products` (با فرمت `multipart/form-data` شامل فایل‌های `images` و `video`)
-- **ویرایش محصول:** `PUT /products/:id` (با فرمت `multipart/form-data` شامل `existingImageUrls` برای حفظ عکس‌های قبلی)
-- **حذف محصول:** `DELETE /products/:id` (پاسخ: `{"success": true}`)
-- **لیست دسته‌بندی‌ها:** `GET /categories` (خروجی: آرایه‌ای از نام دسته‌ها)
+---
+
+### قدم ۵: درگاه پرداخت الکترونیک و تست (Payment Gateway Flow)
+
+```
+[فرانت] ثبت سفارش ---> دریافت payment_url ---> انتقال کاربر به درگاه (window.location.href)
+                                                       |
+                                                       v
+                                            پرداخت موفق در درگاه
+                                                       |
+                                                       v
+[فرانت] صفحه بازگشت (/profile?tab=Orders) <--- Redirect از درگاه
+```
+
+1. **درخواست پرداخت مستقل:** `POST /api/payment/request/`
+   - Body: `{"order_code": "ORD-9012", "gateway": "mock"}`
+   - خروجی: `payment_url` جهت هدایت کاربر.
+2. **درگاه تستی محیط توسعه (Mock Gateway):**
+   - کاربر به آدرس `http://localhost:4000/api/payment/mock-pay/<authority>` هدایت می‌شود که یک صفحه درگاه واقعی بانکی با دکمه‌های «پرداخت موفق» و «انصراف» است.
+3. **تأییدیه پرداخت (Verify):** `POST /api/payment/verify/`
+   - Body: `{"authority": "AUTH-...", "status": "OK"}`
+   - نتیجه: کسر موجودی قطعی، ثبت شماره پیگیری بانکی (`ref_id`)، تغییر وضعیت سفارش به «پرداخت شده» و صدور اعلان/پیامک.
 
 ---
 
-## ۵. سفارش‌ها (Orders)
+### قدم ۶: کاتالوگ، محصولات ویژه، منتخب و شگفت‌انگیز (Products, Featured & Deals)
 
-### ۵.۱. لیست سفارشات و ثبت مستقیم سفارش
-- **دریافت سفارشات:** `GET /orders`
-- **ثبت سفارش مستقیم (بدون سبد خرید):** `POST /orders`
-  - **Body (JSON):**
+#### ۶.۱. اندپوینت‌های تخصصی صفحه اول و اسلایدرها:
+- **محصولات ویژه و منتخب (Featured Slider):** `GET /api/products/featured/?limit=10`
+- **پیشنهادات شگفت‌انگیز و تخفیف‌دار (Special Offers Deals):** `GET /api/products/special-offers/?limit=10`
+- **پرفروش‌ترین محصولات (Best Sellers):** `GET /api/products/best-sellers/?limit=10`
+- **جدیدترین محصولات (New Arrivals):** `GET /api/products/new-arrivals/?limit=10`
+- **تغییر سریع وضعیت ویژه بودن در ادمین (Toggle Featured):** `PATCH /api/products/:id/toggle-featured/` با بدنه اختیاری `{"is_featured": true}`
+- **عملیات گروهی ادمین روی محصولات (Batch Actions):** `POST /api/products/batch-action/`
   ```json
   {
-    "customer": "علی محمدی",
-    "phone": "09121234567",
-    "address": "تهران، خیابان آزادی",
-    "email": "ali@example.com",
-    "status": "در انتظار پردازش",
-    "payment": "در انتظار",
-    "items": [
-      { "product_id": 1, "quantity": 2 }
+    "ids": [1, 2, 5],
+    "action": "set_featured" // "set_featured" | "unset_featured" | "set_active" | "set_inactive" | "delete" | "change_category"
+  }
+  ```
+
+#### ۶.۲. فیلدهای هر کالا در پاسخ API:
+هر آبجکت محصول شامل کلیدهای زیر است که مستقیماً با کامپوننت‌های فرانت منطبق هستند:
+- `id`: شناسه عددی کالا
+- `name` و `title`: نام محصول (فارسی)
+- `subtitle`: زیرعنوان / نام برند
+- `price`: قیمت فعلی (تومان)
+- `oldPrice`: قیمت خط‌خورده قبل از تخفیف (در صورت وجود)
+- `discount`: درصد تخفیف محاسبه‌شده (مثلاً ۲۰)
+- `Empressive`: کالای شگفت‌انگیز / ویژه (`is_featured`)
+- `rating`: امتیاز میانگین کاربران (مثلاً ۴.۸)
+- `image`: **آدرس تصویر اصلی به عنوان رشته متنی** (مناسب `src={product.image}`)
+- `images`: گالری تمام تصاویر محصول `[{ id, url, name }]`
+- `video`: فایل ویدیو اختصاصی معرفی محصول `{ url, name }`
+- `stock`: موجودی انبار
+- `status`: «فعال» یا «ناموجود»
+- `variants`: لیست تنوع‌ها (رنگ، سایز و...)
+- `specifications`: دیکشنری مشخصات فنی کالا
+
+#### ۶.۳. فیلترهای جستجو و مرتب‌سازی:
+- **لیست همه یا فیلتر:** `GET /api/products/`
+  - `?category=اسپیکر`: فیلتر دسته‌بندی
+  - `?search=میکروفون`: جستجو در عنوان، برند و کد
+  - `?brand=JBL`: فیلتر برند
+  - `?min_price=1000000&max_price=5000000`: فیلتر بازه قیمت
+  - `?in_stock=true`: فقط کالاهای موجود
+  - `?is_featured=true`: کالاهای پیشنهاد شگفت‌انگیز (اسلایدر قرمز)
+  - `?ordering=price_asc`: ارزان‌ترین
+  - `?ordering=price_desc`: گران‌ترین
+  - `?ordering=popular`: پرفروش‌ترین و پربازدیدترین
+  - `?ordering=rating`: بالاترین امتیاز
+  - `?ordering=newest`: جدیدترین
+  - `?page=1&page_size=12`: صفحه‌بندی اختیاری
+
+#### سایر اندپوینت‌های کاتالوگ:
+- **جزئیات محصول:** `GET /api/products/:id/`
+- **کالاهای مرتبط و پیشنهادی:** `GET /api/products/:id/related/`
+- **مقایسه چند کالا:** `GET /api/products/compare/?ids=1,2,3`
+- **لیست برندها:** `GET /api/brands/`
+- **لیست دسته‌بندی‌ها:** `GET /api/categories/`
+- **تنوع‌های محصول:** `GET /api/products/:id/variants/` (مشاهده و افزودن تنوع کالا)
+- **ویرایش و حذف تنوع:** `PATCH /api/variants/:id/` و `DELETE /api/variants/:id/`
+
+---
+
+### قدم ۷: نظرات و پرسش و پاسخ کاربران (Reviews & Q&A)
+
+#### نظرات و امتیازدهی:
+- **مشاهده نظرات تاییدشده و آمار امتیاز:** `GET /api/products/:id/reviews/`
+- **ثبت نظر جدید:** `POST /api/products/:id/reviews/`
+```json
+{
+  "rating": 5,
+  "comment": "کیفیت ساخت و تفکیک صدا بسیار بالاست.",
+  "user_name": "امیر رضایی",
+  "pros": ["بدنه مقاوم", "صدای رسا"],
+  "cons": ["وزن کمی بالاست"]
+}
+```
+
+#### پرسش و پاسخ:
+- **مشاهده پرسش‌ها:** `GET /api/products/:id/questions/`
+- **ثبت پرسش:** `POST /api/products/:id/questions/` با بدنه `{"question_text": "آیا کابل داخل کارتن هست؟"}`
+- **ثبت پاسخ:** `POST /api/questions/:question_id/answers/` با بدنه `{"answer_text": "بله، کابل اورجینال موجود است."}`
+
+---
+
+### قدم ۸: پروفایل کاربری و پنل مشتری (Profile, Orders, Addresses)
+
+#### ۸.۱. مشخصات فردی
+- **دریافت اطلاعات:** `GET /api/me/`
+- **ویرایش مشخصات:** `PUT /api/me/`
+```json
+{
+  "NameAndFamily": "سارا محمدی",
+  "BirthDate": "1375/04/12",
+  "IdCard": "0012345678",
+  "Email": "sara@example.com",
+  "Number": "09121234567",
+  "gender": "زن"
+}
+```
+- **آپلود آواتار:** `POST /api/me/avatar/` با فرم‌دیتای کلید `avatar`.
+
+#### ۸.۲. لیست سفارش‌های کاربر در تب‌های پروفایل
+- **مسیر:** `GET /api/me/orders/`
+- **پاسخ ساختاریافته ویژه کامپوننت `Profile.jsx`:**
+```json
+{
+  "InProgress": [ { "id": 1, "code": "ORD-9010", "status": "در حال ارسال", "total": 12500000, ... } ],
+  "Delivered": [ ... ],
+  "Returned": [ ... ],
+  "Canceled": [ ... ]
+}
+```
+
+#### ۸.۳. لغو سفارش توسط مشتری
+- **مسیر:** `POST /api/orders/:code/cancel/`
+- **Body:** `{"reason": "انصراف از خرید"}`
+- موجودی کالاهای سفارش داده‌شده به طور خودکار به انبار بازگردانده می‌شود.
+
+#### ۸.۴. فاکتور چاپی سفارش
+- **آدرس وب فاکتور:** `http://localhost:4000/api/orders/:code/invoice/`
+- آماده چاپ مستقیم یا باز شدن در تگ `<iframe>` / پنجره جدید.
+
+#### ۸.۵. مدیریت آدرس‌ها
+- **لیست آدرس‌ها:** `GET /api/addresses/`
+- **ثبت آدرس جدید:** `POST /api/addresses/`
+```json
+{
+  "title": "محل کار",
+  "recipient_name": "سارا محمدی",
+  "recipient_phone": "09121234567",
+  "province": "تهران",
+  "city": "تهران",
+  "address": "خیابان آزادی، خیابان حبیب‌الهی، پلاک ۲۰",
+  "postal_code": "1458899999",
+  "is_default": true
+}
+```
+- **حذف آدرس:** `DELETE /api/addresses/:id/`
+- **تعیین پیش‌فرض:** `PATCH /api/addresses/:id/`
+
+#### ۸.۶. علاقه‌مندی‌ها (Wishlist)
+- **مشاهده لیست:** `GET /api/favorites/`
+- **افزودن کالا:** `POST /api/favorites/:product_id/`
+- **حذف کالا:** `DELETE /api/favorites/:product_id/`
+
+#### ۸.۷. پیام‌ها و اعلان‌ها (Notifications)
+- **لیست پیام‌ها:** `GET /api/me/messages/`
+- **خواندن یک پیام:** `PATCH /api/me/messages/:id/read/`
+- **خواندن تمام پیام‌ها:** `POST /api/me/messages/read-all/`
+
+---
+
+### قدم ۹: اسلاید شو ها، بنرها و صفحه اصلی (Slideshows & Marketing)
+
+#### ۹.۱. مدیریت بنرها و اسلایدرها (Banners CRUD):
+- **لیست بنرهای فعال صفحه اصلی:** `GET /api/banners/?type=hero` (یا `type=promo` برای بنرهای میانی)
+- **لیست همه بنرها برای پنل ادمین:** `GET /api/banners/?all=true`
+- **ایجاد بنر جدید (توسط ادمین):** `POST /api/banners/` (ارسال به صورت `multipart/form-data`)
+  - فیلدها: `title`, `subtitle`, `image` (فایل عکس), `link_url`, `banner_type` (`hero` | `promo` | `sidebar`), `display_order`, `is_active`
+- **جزئیات بنر:** `GET /api/banners/:id/`
+- **ویرایش بنر:** `PATCH /api/banners/:id/` (امکان تغییر تصویر، لینک و وضعیت فعال بودن)
+- **حذف بنر:** `DELETE /api/banners/:id/` (حذف رکورد و فایل فیزیکی عکس)
+- **تغییر ترتیب نمایش اسلایدها (Reorder):** `POST /api/banners/reorder/`
+  ```json
+  {
+    "order": [
+      { "id": 3, "display_order": 0 },
+      { "id": 1, "display_order": 1 },
+      { "id": 2, "display_order": 2 }
     ]
   }
   ```
 
-### ۵.۲. جزئیات، تغییر وضعیت و حذف سفارش
-- **جزئیات سفارش:** `GET /orders/:code` (هم کد مثل `ORD-9001` و هم آیدی عددی پشتیبانی می‌شود).
-- **تغییر وضعیت سفارش (در پنل ادمین):**
-  - **مسیر:** `PATCH /orders/:code/status`
-  - **Body (JSON):** `{"status": "در حال ارسال"}`
-  - وضعیت‌های مجاز: `"در انتظار پردازش"`, `"در حال ارسال"`, `"تحویل شده"`, `"لغو شده"`
-  > **نکته انبار:** در صورتی که سفارش به وضعیت `"لغو شده"` تغییر یابد، موجودی کالاهای آن به صورت خودکار به انبار بازگردانده می‌شود.
-- **حذف سفارش:** `DELETE /orders/:code`
-
----
-
-## ۶. مشتریان و کاربران (Customers & Users)
-
-جدول مشتریان و کاربران سیستم کاملاً یکپارچه هستند.
-
-- **لیست مشتریان (برای پنل ادمین):** `GET /customers`
-  - خروجی:
-  ```json
-  [
-    {
-      "id": 1,
-      "name": "علی محمدی",
-      "phone": "09121111111",
-      "email": "ali.m@example.com",
-      "orders": 6,
-      "spent": 89400000,
-      "joined": "1404/06/25"
-    }
-  ]
-  ```
-
----
-
-## ۷. پنل کاربری و پروفایل (Profile, Orders, Addresses, Favorites)
-
-تمامی اندپوینت‌های مورد نیاز برای کامپوننت `Profile.jsx` آماده و متصل است:
-
-### ۷.۱. اطلاعات پروفایل
-- **دریافت اطلاعات:** `GET /me` (از طریق توکن لاگین یا پارامتر `?phone=0912...`)
-- **ویرایش اطلاعات:** `PUT /me`
-  - **Body (JSON):**
+#### ۹.۲. وبلاگ، تماس با ما و تنظیمات فروشگاه:
+- **لیست مقالات و وبلاگ:** `GET /api/articles/`
+- **جزئیات مقاله و ویدیوها:** `GET /api/articles/:id/`
+- **فرم تماس با ما:** `POST /api/contact/` با بدنه `{"name": "...", "phone": "...", "subject": "...", "message": "..."}`
+- **خبرنامه:** `POST /api/newsletter/subscribe/` با بدنه `{"email_or_phone": "0912..."}`
+- **مشاهده تنظیمات فروشگاه:** `GET /api/site-settings/`
+- **ویرایش تنظیمات فروشگاه توسط ادمین:** `PATCH /api/site-settings/`
   ```json
   {
-    "NameAndFamily": "سید محمد محمدی",
-    "BirthDate": "1375/04/10",
-    "IdCard": "0012345678",
-    "Email": "mohammadi@example.com",
-    "Number": "09027741653",
-    "gender": "male"
+    "title": "فروشگاه تجهیزات صوتی آوای انعکاس",
+    "phone_support": "021-66700000",
+    "email_support": "info@avayenekas.com",
+    "address": "تهران، خیابان جمهوری...",
+    "free_shipping_threshold": 3000000,
+    "default_shipping_cost": 45000
   }
   ```
 
-### ۷.۲. سفارشات کاربر در تب‌های پروفایل
-- **مسیر:** `GET /me/orders`
-- **پاسخ:** این پاسخ دقیقا به صورت تفکیک‌شده بر اساس تب‌های کامپوننت `Profile.jsx` ارسال می‌شود:
-```json
-{
-  "InProgress": [ /* لیست سفارشات جاری */ ],
-  "Delivered": [ /* لیست سفارشات تحویل‌شده */ ],
-  "Returned": [ /* لیست مرجوع‌شده‌ها */ ],
-  "Canceled": [ /* لیست سفارشات لغو‌شده */ ]
-}
-```
-
-### ۷.۳. مدیریت آدرس‌ها
-- **دریافت لیست آدرس‌ها:** `GET /addresses`
-- **ثبت آدرس جدید:** `POST /addresses` با بدنه `{"title": "منزل", "address": "تهران میدان ونک", "postal_code": "12345"}`
-- **تعیین آدرس پیش‌فرض:** `PATCH /addresses/:id`
-- **حذف آدرس:** `DELETE /addresses/:id`
-
-### ۷.۴. لیست علاقه‌مندی‌ها (Wishlist)
-- **مشاهده لیست:** `GET /favorites` (خروجی: آرایه‌ای از محصولات موردعلاقه)
-- **افزودن به علاقه‌مندی‌ها:** `POST /favorites/:product_id`
-- **حذف از علاقه‌مندی‌ها:** `DELETE /favorites/:product_id`
-
 ---
 
-## ۸. مقالات و وبلاگ (Articles)
+### قدم ۱۰: پنل ادمین اختصاصی و گزارشات (Admin Panel & Reports)
 
-- **لیست مقالات:** `GET /articles`
-- **جزئیات مقاله:** `GET /articles/:id`
-- **ایجاد مقاله:** `POST /articles` (`multipart/form-data` شامل فیلدهای `coverImage` و فایل‌های `videos`)
-- **ویرایش مقاله:** `PUT /articles/:id` (`multipart/form-data` با ارسال `existingVideoUrls` و `existingCoverImageUrl`)
-- **حذف مقاله:** `DELETE /articles/:id`
+#### ۱۰.۱. شاخص‌ها و متریک‌های تحلیلی داشبورد (Dashboard Metrics):
+- **مسیر:** `GET /api/admin/dashboard/metrics/`
+- **خروجی جامع شامل:**
+  - `summary`: مجموع فروش، درآمد کل، تعداد کل سفارشات، تعداد کل محصولات، کالاهای رو به اتمام، تعداد کل مشتریان، ارزش ریالی کل انبار (`total_inventory_value`)، تعداد اقلام انبار (`total_inventory_items`)
+  - `sales_by_month`: آرایه فروش در ۱۲ ماه سال شمسی جهت ترسیم نمودار میله‌ای/خطی در پنل ادمین:
+    ```json
+    [
+      { "month": "فروردین", "sales": 32000000 },
+      { "month": "اردیبهشت", "sales": 41000000 },
+      ...
+    ]
+    ```
+  - `category_share`: سهم هر دسته‌بندی از موجودی و فروش جهت ترسیم نمودار دایره‌ای (PieChart):
+    ```json
+    [
+      { "name": "اسپیکر", "value": 32 },
+      { "name": "هدفون", "value": 26 },
+      ...
+    ]
+    ```
+  - `orders_by_status`: تفکیک سفارش‌ها بر اساس ۵ وضعیت مجاز
+  - `low_stock_alerts`: لیست ۱۰ کالای کم‌موجودی جهت هشدار تأمین انبار
+  - `recent_orders`: آخرین سفارشات ثبت‌شده
 
----
+#### ۱۰.۲. مدیریت مشتریان در پنل ادمین:
+- **لیست مشتریان با جستجو:** `GET /api/customers/?search=0912...`
+- **مشاهده پرونده کامل مشتری، آدرس‌ها و تمام سفارشات:** `GET /api/customers/:id/`
+- **ویرایش وضعیت مشتری (فعال/مسدودسازی):** `PATCH /api/customers/:id/` با بدنه `{"is_active": false}`
 
-## ۹. داشبورد تحلیلی ادمین (Admin Analytics)
+#### ۱۰.۳. مدیریت سفارشات:
+- **لیست سفارش‌ها:** `GET /api/orders/`
+- **تغییر وضعیت سفارش توسط ادمین:** `PATCH /api/orders/:code/status/` با بدنه `{"status": "در حال ارسال", "comment": "تحویل تیپاکس شد"}`
+- **ثبت کد رهگیری پستی و یادداشت:** `PATCH /api/orders/:code/` با بدنه `{"tracking_code": "18492048590", "shipping_method": "تیپاکس"}`
+- **حذف سفارش:** `DELETE /api/orders/:code/`
 
-این اندپوینت برای نمایش شاخص‌های عملکردی و رسم نمودار در پنل ادمین (`AdminPannel.jsx`) طراحی شده است:
-
-- **مسیر:** `GET /admin/dashboard/metrics`
-- **نمونه خروجی:**
-```json
-{
-  "summary": {
-    "total_revenue": 214500000,
-    "total_orders": 10,
-    "total_products": 15,
-    "low_stock_count": 3,
-    "total_customers": 8
-  },
-  "orders_by_status": {
-    "در انتظار پردازش": 3,
-    "در حال ارسال": 3,
-    "تحویل شده": 3,
-    "لغو شده": 1
-  },
-  "low_stock_alerts": [
-    {
-      "id": 7,
-      "name": "اسپیکر پرتابل JBL Charge 5",
-      "stock": 0,
-      "threshold": 6
-    }
-  ],
-  "recent_orders": [
-    {
-      "id": "ORD-9010",
-      "customer": "الناز جعفری",
-      "date": "1404/05/25",
-      "items": 3,
-      "total": 22300000,
-      "status": "در انتظار پردازش",
-      "payment": "در انتظار"
-    }
-  ],
-  "top_selling_products": [
-    {
-      "product_id": 1,
-      "product_name": "اسپیکر مانیتورینگ استودیویی JBL 305P",
-      "total_sold": 4
-    }
-  ],
-  "sales_trend": [
-    { "date": "1404/05/20", "sales": 21400000 },
-    { "date": "1404/05/21", "sales": 8900000 }
-  ]
-}
-```
-
----
-
-## ۱۰. جدول کدهای وضعیت HTTP (Status Codes)
-
-| کد وضعیت | معنی | مورد کاربرد |
-|---|---|---|
-| `200 OK` | موفق | درخواست‌های GET, PUT, PATCH |
-| `201 Created` | ایجاد شد | ثبت موفق محصول، سفارش، آیتم سبد، آدرس، توکن |
-| `400 Bad Request` | دیتای نامعتبر | خطای اعتبارسنجی فیلدها، کمبود موجودی انبار، کد OTP اشتباه |
-| `401 Unauthorized` | عدم احراز هویت | عدم ارسال یا نامعتبر بودن توکن JWT |
-| `404 Not Found` | یافت نشد | محصول، سفارش یا مقاله پیدا نشد |
-| `500 Server Error` | خطای سرور | خطاهای غیرمنتظره بک‌اند |
-
----
-
-## ۱۱. سیستم‌های پیشرفته فروشگاهی جدید (E-Commerce Extensions)
-
-### ۱۱.۱. مستندات تعاملی Swagger و OpenAPI
-- **رابط وب Swagger UI:** `http://localhost:4000/api/docs/`
-- **رابط وب Redoc:** `http://localhost:4000/api/redoc/`
-- **فایل اسکیما OpenAPI:** `http://localhost:4000/api/schema/`
-
-### ۱۱.۲. کدهای تخفیف و کوپن (Coupons)
-- **بررسی و محاسبه تخفیف:** `POST /coupons/validate`
-  - Body: `{"code": "WELCOME", "total_amount": 2500000}`
-  - خروجی: مبلغ تخفیف محاسبه‌شده و مبلغ نهایی پس از تخفیف.
-- **اعمال در سبد خرید:** `POST /cart/coupon` با بدنه `{"code": "WELCOME"}`
-- **حذف کوپن از سبد خرید:** `DELETE /cart/coupon`
-
-### ۱۱.۳. درگاه پرداخت الکترونیک (Payment Gateway)
-- **درخواست پرداخت سفارش:** `POST /payment/request`
-  - Body: `{"order_code": "ORD-9001", "gateway": "mock"}`
-  - خروجی: `payment_url` جهت هدایت کاربر به درگاه (در محیط توسعه به صفحه شبیه‌ساز داخلی هدایت می‌شود).
-- **تأییدیه بازگشت از درگاه:** `GET/POST /payment/verify?Authority=...&Status=OK`
-  - وضعیت پرداخت سفارش را به «پرداخت شده» تغییر داده و رسید دیجیتال صادر می‌کند.
-- **شبیه‌ساز پرداخت تستی:** `GET /payment/mock-pay/<authority>`
-
-### ۱۱.۴. نظرات، نقد و بررسی و امتیازدهی به کالا (Reviews)
-- **مشاهده نظرات یک کالا و آمار امتیازات:** `GET /products/:id/reviews`
-- **ثبت نظر جدید:** `POST /products/:id/reviews`
-  - Body:
+#### ۱۰.۴. مدیریت کوپن‌های تخفیف (Admin Coupons CRUD):
+- **لیست کوپن‌ها:** `GET /api/admin/coupons/`
+- **ایجاد کوپن جدید:** `POST /api/admin/coupons/`
   ```json
   {
-    "rating": 5,
-    "comment": "تفکیک صدای این محصول فوق‌العاده است.",
-    "user_name": "علی رضایی",
-    "pros": ["صدای شفاف", "بیس تفکیک‌شده"],
-    "cons": ["کمی داغ می‌کند"]
+    "code": "YALDA40",
+    "discount_type": "percent", // یا "fixed"
+    "discount_value": 40,
+    "max_discount_amount": 1000000,
+    "min_purchase_amount": 2000000,
+    "usage_limit": 100,
+    "is_active": true
   }
   ```
-  *(با ثبت هر نظر، میانگین امتیاز کالا در دیتابیس به صورت خودکار به‌روزرسانی می‌شود)*
+- **ویرایش کوپن:** `PATCH /api/admin/coupons/:id/`
+- **حذف کوپن:** `DELETE /api/admin/coupons/:id/`
 
-### ۱۱.۵. پیام‌ها و اعلان‌های کاربر (Notifications)
-برای استفاده در تب «پیام‌ها» در صفحه پروفایل کاربر:
-- **لیست پیام‌ها:** `GET /me/messages` (یا با پارامتر `?phone=0912...`)
-- **خوانده شدن یک پیام:** `PATCH /me/messages/:id/read`
-- **خوانده شدن تمام پیام‌ها:** `POST /me/messages/read-all`
+#### ۱۰.۵. مدیریت نظرات و تایید آن‌ها:
+- **لیست نظرات:** `GET /api/admin/reviews/?approved=false`
+- **تایید یا رد نظر:** `PATCH /api/admin/reviews/:id/` با بدنه `{"is_approved": true}`
+- **حذف نظر:** `DELETE /api/admin/reviews/:id/`
 
-### ۱۱.۶. تاریخچه وضعیت و رهگیری سفارش (Order Tracking & History)
-- **مشاهده تایم‌لاین تغییرات وضعیت سفارش:** `GET /orders/:code/history`
-- **فیلدهای اضافه سفارش:** `tracking_code` (کد رهگیری پستی/تیپاکس)، `shipping_method` (روش ارسال)، `shipping_cost` (هزینه ارسال)، `discount_amount` (مبلغ تخفیف اعمال‌شده).
-
-### ۱۱.۷. فیلترها و مرتب‌سازی پیشرفته محصولات (Catalog Filters)
-- فیلتر بر اساس برند: `GET /products?brand=JBL`
-- فیلتر بازه قیمت: `GET /products?min_price=5000000&max_price=20000000`
-- فقط کالاهای موجود: `GET /products?in_stock=true`
-- فقط کالاهای منتخب/شگفت‌انگیز: `GET /products?is_featured=true`
-- مرتب‌سازی: `GET /products?ordering=price_asc` (ارزان‌ترین)، `price_desc` (گران‌ترین)، `newest` (جدیدترین)، `popular` (محبوب‌ترین)، `rating` (بالاترین امتیاز).
-- دریافت لیست برندهای موجود با تعداد محصولات: `GET /brands`
+#### ۱۰.۶. مدیریت پیام‌های تماس با ما:
+- **لیست پیام‌ها:** `GET /api/admin/contact-messages/?responded=false`
+- **علامت‌گذاری پاسخ‌داده‌شده:** `PATCH /api/admin/contact-messages/:id/` با بدنه `{"is_responded": true}`
+- **حذف پیام:** `DELETE /api/admin/contact-messages/:id/`
 
 ---
 
-## ۱۲. امکانات تکمیلی فروشگاه پیشرفته (Enterprise Extensions)
+## ۳. جدول کدهای وضعیت HTTP (Status Codes)
 
-### ۱۲.۱. تنوع و ویژگی‌های کالا (Product Variants)
-محصولات می‌توانند دارای انواع تنوع رنگ، امپدانس یا کانکتور باشند.
-- در آبجکت خروجی هر محصول (`GET /products` یا `GET /products/:id`)، فیلد `variants` شامل لیستی از تنوع‌ها است:
-  ```json
-  "variants": [
-    { "id": 1, "title": "مشکی مات", "sku": "HDP-2044-BLK", "price": 8900000, "stock": 15 },
-    { "id": 2, "title": "سفید صدفی", "sku": "HDP-2044-WHT", "price": 9200000, "stock": 8 }
-  ]
-  ```
+| کد HTTP | مفهوم | کاربرد در API |
+| :--- | :--- | :--- |
+| `200 OK` | موفق | درخواست با موفقیت انجام شد و داده‌ها در بدنه ارسال گردید. |
+| `201 Created` | ساخته شد | محصول، سفارش، آدرس یا آیتم جدید با موفقیت ایجاد شد. |
+| `400 Bad Request` | خطای اعتبارسنجی | پارامترهای ارسالی ناقص یا اشتباه است (پیام خطا در کلید `error` قرار دارد). |
+| `401 Unauthorized` | عدم احراز هویت | توکن JWT ارسال نشده، نامعتبر است یا منقضی شده است. |
+| `403 Forbidden` | عدم دسترسی | کاربر مجوز لازم برای انجام عملیات مورد نظر را ندارد. |
+| `404 Not Found` | یافت نشد | محصول، سفارش، دسته‌بندی یا آدرس درخواستی وجود ندارد. |
+| `429 Too Many Requests` | محدودیت درخواست | به دلیل درخواست‌های بیش از حد (Throttling) دسترسی موقتاً محدود شده است. |
+| `500 Server Error` | خطای داخلی سرور | خطای برنامه‌نویسی یا پایگاه‌داده رخ داده است. |
 
-### ۱۲.۲. پرسش و پاسخ کاربران درباره کالا (Product Q&A)
-- **مشاهده پرسش‌ها و پاسخ‌ها:** `GET /products/:id/questions`
-- **ثبت پرسش جدید:** `POST /products/:id/questions` با بدنه `{"question_text": "آیا کابل تبدیل داخل جعبه است؟"}`
-- **ثبت پاسخ:** `POST /questions/:question_id/answers` با بدنه `{"answer_text": "بله، تبدیل ۶.۳ میلی‌متری موجود است."}`
+---
 
-### ۱۲.۳. کالاهای مرتبط و پیشنهادی (Related Products)
-- **مسیر:** `GET /products/:id/related`
-- کالاهای هم‌دسته یا هم‌برند مشابه را برای بخش «کالاهای پیشنهادی» برمی‌گرداند.
+## ۴. نمونه کد آماده React برای اتصال کامپوننت‌ها
 
-### ۱۲.۴. مقایسه تخصصی کالاها (Product Comparison)
-- **مسیر:** `GET /products/compare?ids=1,2,3`
-- خروجی شامل مشخصات محصولات و تمام کلیدهای فنی مشترک برای ترسیم جدول مقایسه در فرانت‌اند است.
+### نمونه ۱: اتصال اسلایدر محصولات شگفت‌انگیز (`SwiperEmpresive.jsx`)
+```jsx
+import React, { useState, useEffect } from "react";
+import { ProductApi } from "../api/shopApi";
 
-### ۱۲.۵. بنرها و اسلایدرهای صفحه اول (Banners & Hero Sliders)
-- **مسیر:** `GET /banners?type=hero` (یا بدون پارامتر برای دریافت تمام بنرها)
-- برای بارگذاری اسلایدر بالای سایت (`Swiper.jsx`) و بنرهای تبلیغاتی میانی.
+export default function EmperiseveSwiper() {
+  const [products, setProducts] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-### ۱۲.۶. صدور و چاپ فاکتور خرید (Printable Invoice)
-- **مسیر:** `GET /orders/:code/invoice`
-- فاکتور رسمی زیبا و استاندارد فارسی با استایل مناسب پرینت مستقیم (`Ctrl+P` یا دکمه «چاپ فاکتور»).
+  useEffect(() => {
+    ProductApi.getProducts({ is_featured: true })
+      .then((data) => {
+        // در صورت فعال بودن صفحه‌بندی، data.results وگرنه data
+        const list = Array.isArray(data) ? data : data.results || [];
+        setProducts(list);
+      })
+      .catch((err) => console.error("خطا در بارگذاری پیشنهادات شگفت‌انگیز:", err))
+      .finally(() => setLoading(false));
+  }, []);
 
-### ۱۲.۷. خبرنامه، تماس با ما و تنظیمات فروشگاه
-- **ثبت پیام تماس با ما:** `POST /contact` با بدنه `{"name": "...", "phone": "...", "subject": "...", "message": "..."}`
-- **عضویت در خبرنامه:** `POST /newsletter/subscribe` با بدنه `{"email_or_phone": "0912..."}`
-- **اطلاعات تماس و تنظیمات فروشگاه:** `GET /site-settings` (شماره پشتیبانی، شبکه‌های اجتماعی، سقف ارسال رایگان)
+  if (loading) return <div>در حال بارگذاری...</div>;
+
+  return (
+    <div className="swiper-container">
+      {products.map((product) => (
+        <div key={product.id} className="product-card">
+          <img src={product.image} alt={product.title} />
+          <h3>{product.title}</h3>
+          <span>{product.price.toLocaleString("fa-IR")} تومان</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+```
+
+### نمونه ۲: اتصال افزودن به سبد خرید
+```jsx
+import { CartApi } from "../api/shopApi";
+
+async function handleAddToCart(productId) {
+  try {
+    const updatedCart = await CartApi.addItem(productId, 1);
+    alert("کالا به سبد خرید اضافه شد!");
+    console.log("خلاصه سبد:", updatedCart);
+  } catch (error) {
+    alert(error.message);
+  }
+}
+```
+
+---
+
+## ۵. چک‌لیست تحویل نهایی و پایش سیستم
+
+- [x] مدل‌های پایگاه داده استاندارد و مهاجرت‌ها (Migrations) کامل اجرا شده است.
+- [x] سیستم احراز هویت پیامکی بدون پسورد (OTP) + JWT Tokens پیاده‌سازی شده است.
+- [x] سبد خرید دوگانه (مهمان با `X-Session-Key` و کاربر واردشده با ادغام خودکار) فعال است.
+- [x] سیستم کوپن‌های درصدی و ریالی با سقف خرید و اعتبارسنجی خودکار تست شده است.
+- [x] ثبت سفارش اتمیک با قفل هم‌زمانی (`select_for_update`) و کاهش/بازگردانی موجودی انبار فعال است.
+- [x] درگاه پرداخت تستی داخلی (`mock_payment_page`) و تأییدیه زرین‌پال پیاده‌سازی شده است.
+- [x] پنل ادمین با پشتیبانی کامل از آپلود چندگانه تصاویر و ویدیوها آماده است.
+- [x] ماژول فرانت‌اند آماده `Front/AvayEnekas/src/api/shopApi.js` ایجاد گردید.

@@ -4,7 +4,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import F
 
 from core.jalali import today_jalali
-from core.models import Cart, Order, OrderItem, OrderStatusHistory, Product, User
+from core.models import Cart, Order, OrderItem, OrderStatusHistory, Product, ProductVariant, SiteSetting, User
 from core.services.coupon_service import CouponService
 from core.services.notification_service import NotificationService
 
@@ -50,40 +50,78 @@ class OrderService:
         if payment not in Order.PAYMENT_STATUSES:
             raise ValidationError(f"وضعیت پرداخت نامعتبر است. وضعیت‌های مجاز: {', '.join(Order.PAYMENT_STATUSES)}")
 
-        quantities: dict[int, int] = {}
+        product_quantities: dict[int, int] = {}
+        variant_quantities: dict[int, int] = {}
+        parsed_items: list[dict[str, Any]] = []
+
         for item in items_data:
             pid = item.get("product_id")
+            vid = item.get("variant_id")
             qty = int(item.get("quantity", 1))
             if not pid or qty < 1:
                 raise ValidationError("شناسه یا تعداد کالا نامعتبر است")
-            quantities[pid] = quantities.get(pid, 0) + qty
+            product_quantities[pid] = product_quantities.get(pid, 0) + qty
+            if vid:
+                variant_quantities[vid] = variant_quantities.get(vid, 0) + qty
+            parsed_items.append({"product_id": pid, "variant_id": vid, "quantity": qty})
 
         for attempt in range(5):
             try:
                 with transaction.atomic():
-                    products = list(
-                        Product.objects.select_for_update().filter(id__in=quantities.keys())
-                    )
-                    if len(products) != len(quantities):
+                    products = {
+                        p.id: p
+                        for p in Product.objects.select_for_update().filter(id__in=product_quantities.keys())
+                    }
+                    if len(products) != len(product_quantities):
                         raise ValidationError("برخی از محصولات انتخابی در سیستم یافت نشدند")
 
-                    for product in products:
-                        required_qty = quantities[product.id]
-                        if product.stock < required_qty:
+                    for pid, req_qty in product_quantities.items():
+                        product = products[pid]
+                        if product.stock < req_qty:
                             raise ValidationError(
                                 f"موجودی کالای «{product.name}» کافی نیست (موجودی: {product.stock})"
                             )
 
+                    variants: dict[int, ProductVariant] = {}
+                    if variant_quantities:
+                        variants = {
+                            v.id: v
+                            for v in ProductVariant.objects.select_for_update().filter(id__in=variant_quantities.keys())
+                        }
+                        for vid, req_qty in variant_quantities.items():
+                            variant = variants.get(vid)
+                            if not variant:
+                                raise ValidationError("برخی از تنوع‌های انتخابی یافت نشدند")
+                            if variant.stock < req_qty:
+                                raise ValidationError(
+                                    f"موجودی تنوع «{variant.title}» کافی نیست (موجودی: {variant.stock})"
+                                )
+
                     # Deduct stock and increment sales_count
-                    for product in products:
-                        required_qty = quantities[product.id]
-                        Product.objects.filter(id=product.id).update(
-                            stock=F("stock") - required_qty,
-                            sales_count=F("sales_count") + required_qty,
+                    for pid, req_qty in product_quantities.items():
+                        Product.objects.filter(id=pid).update(
+                            stock=F("stock") - req_qty,
+                            sales_count=F("sales_count") + req_qty,
+                        )
+
+                    for vid, req_qty in variant_quantities.items():
+                        ProductVariant.objects.filter(id=vid).update(
+                            stock=F("stock") - req_qty
                         )
 
                     # Calculate total before discounts
-                    raw_total = sum(p.price * quantities[p.id] for p in products)
+                    raw_total = 0
+                    for item in parsed_items:
+                        prod = products[item["product_id"]]
+                        var = variants.get(item["variant_id"]) if item["variant_id"] else None
+                        unit_p = var.price if var else prod.price
+                        raw_total += unit_p * item["quantity"]
+
+                    # Calculate shipping cost from SiteSetting if not set
+                    if shipping_cost == 0 and raw_total > 0:
+                        setting = SiteSetting.get_settings()
+                        if raw_total < setting.free_shipping_threshold:
+                            shipping_cost = setting.default_shipping_cost
 
                     # Check coupon if provided
                     discount_amount = 0
@@ -115,13 +153,18 @@ class OrderService:
                         customer_notes=customer_notes.strip(),
                     )
 
-                    for product in products:
+                    for item in parsed_items:
+                        prod = products[item["product_id"]]
+                        var = variants.get(item["variant_id"]) if item["variant_id"] else None
+                        unit_p = var.price if var else prod.price
                         OrderItem.objects.create(
                             order=order,
-                            product=product,
-                            product_name=product.name,
-                            price=product.price,
-                            quantity=quantities[product.id],
+                            product=prod,
+                            variant=var,
+                            variant_title=var.title if var else "",
+                            product_name=prod.name,
+                            price=unit_p,
+                            quantity=item["quantity"],
                         )
 
                     if valid_coupon:
@@ -168,14 +211,18 @@ class OrderService:
         shipping_method: str = "پست پیشتاز",
         customer_notes: str = "",
     ) -> Order:
-        items = list(cart.items.all())
+        items = list(cart.items.select_related("product", "variant"))
         if not items:
             raise ValidationError("سبد خرید خالی است")
 
         effective_coupon = coupon_code or (cart.coupon.code if cart.coupon else "")
 
         items_data = [
-            {"product_id": item.product_id, "quantity": item.quantity}
+            {
+                "product_id": item.product_id,
+                "variant_id": item.variant_id,
+                "quantity": item.quantity,
+            }
             for item in items
         ]
 
@@ -217,6 +264,10 @@ class OrderService:
                     Product.objects.filter(id=item.product_id).update(
                         stock=F("stock") + item.quantity,
                         sales_count=F("sales_count") - item.quantity,
+                    )
+                if item.variant_id:
+                    ProductVariant.objects.filter(id=item.variant_id).update(
+                        stock=F("stock") + item.quantity,
                     )
 
         order.status = new_status

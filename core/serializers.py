@@ -168,6 +168,7 @@ class ProductSerializer(serializers.ModelSerializer):
     discount = serializers.SerializerMethodField()
     Empressive = serializers.BooleanField(source="is_featured", required=False)
     status = serializers.SerializerMethodField()
+    image = serializers.SerializerMethodField()
     images = serializers.SerializerMethodField()
     video = serializers.SerializerMethodField()
     reviews_count = serializers.SerializerMethodField()
@@ -199,6 +200,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "weight_grams",
             "reviews_count",
             "variants",
+            "image",
             "images",
             "video",
         ]
@@ -207,6 +209,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "title",
             "discount",
             "status",
+            "image",
             "images",
             "video",
             "views_count",
@@ -214,6 +217,22 @@ class ProductSerializer(serializers.ModelSerializer):
             "reviews_count",
             "variants",
         ]
+
+    def to_internal_value(self, data: Any) -> dict[str, Any]:
+        data_copy = data.copy() if hasattr(data, "copy") else dict(data)
+        if "title" in data_copy and "name" not in data_copy:
+            data_copy["name"] = data_copy["title"]
+        if "oldPrice" in data_copy and "old_price" not in data_copy:
+            data_copy["old_price"] = data_copy["oldPrice"]
+        return super().to_internal_value(data_copy)
+
+    def get_image(self, obj: Product) -> str | None:
+        first = obj.product_images.first()
+        if not first:
+            return None
+        url = first.image.url
+        request = self.context.get("request")
+        return request.build_absolute_uri(url) if request else url
 
     def get_discount(self, obj: Product) -> int:
         if obj.old_price and obj.old_price > obj.price:
@@ -438,6 +457,8 @@ class CartSerializer(serializers.ModelSerializer):
 
 
 class CouponSerializer(serializers.ModelSerializer):
+    is_valid = serializers.SerializerMethodField()
+
     class Meta:
         model = Coupon
         fields = [
@@ -449,9 +470,17 @@ class CouponSerializer(serializers.ModelSerializer):
             "min_purchase_amount",
             "valid_from",
             "valid_until",
+            "usage_limit",
+            "used_count",
+            "per_user_limit",
             "is_active",
+            "is_valid",
+            "created_at",
         ]
-        read_only_fields = ["id"]
+        read_only_fields = ["id", "used_count", "is_valid", "created_at"]
+
+    def get_is_valid(self, obj: Coupon) -> bool:
+        return obj.is_valid_now()
 
 
 class PaymentTransactionSerializer(serializers.ModelSerializer):
@@ -490,8 +519,6 @@ class NotificationSerializer(serializers.ModelSerializer):
 
 
 class BannerSerializer(serializers.ModelSerializer):
-    image = serializers.SerializerMethodField()
-
     class Meta:
         model = Banner
         fields = [
@@ -503,14 +530,19 @@ class BannerSerializer(serializers.ModelSerializer):
             "banner_type",
             "display_order",
             "is_active",
+            "created_at",
         ]
+        read_only_fields = ["id", "created_at"]
 
-    def get_image(self, obj: Banner) -> str | None:
-        if not obj.image:
-            return None
+    def to_representation(self, instance: Banner) -> dict[str, Any]:
+        data = super().to_representation(instance)
         request = self.context.get("request")
-        url = obj.image.url
-        return request.build_absolute_uri(url) if request else url
+        if instance.image:
+            url = instance.image.url
+            data["image"] = request.build_absolute_uri(url) if request else url
+        else:
+            data["image"] = None
+        return data
 
 
 class ContactMessageSerializer(serializers.ModelSerializer):

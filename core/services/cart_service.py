@@ -2,7 +2,7 @@ from typing import Any
 from django.core.exceptions import ValidationError
 from django.db import transaction
 
-from core.models import Cart, CartItem, Coupon, Product, User
+from core.models import Cart, CartItem, Coupon, Product, ProductVariant, SiteSetting, User
 from core.services.coupon_service import CouponService
 
 
@@ -29,6 +29,7 @@ class CartService:
         cart: Cart,
         product_id: int,
         quantity: int = 1,
+        variant_id: int | None = None,
     ) -> CartItem:
         if quantity <= 0:
             raise ValidationError("تعداد نامعتبر است")
@@ -38,17 +39,28 @@ class CartService:
         except Product.DoesNotExist:
             raise ValidationError("محصول مورد نظر یافت نشد")
 
-        if product.stock < quantity:
-            raise ValidationError("موجودی محصول در انبار کافی نیست")
+        variant = None
+        if variant_id:
+            try:
+                variant = ProductVariant.objects.get(pk=variant_id, product=product, is_active=True)
+            except ProductVariant.DoesNotExist:
+                raise ValidationError("تنوع محصول انتخاب شده معتبر نیست")
+            if variant.stock < quantity:
+                raise ValidationError("موجودی تنوع انتخاب شده در انبار کافی نیست")
+        else:
+            if product.stock < quantity:
+                raise ValidationError("موجودی محصول در انبار کافی نیست")
 
         item, created = CartItem.objects.get_or_create(
             cart=cart,
             product=product,
+            variant=variant,
             defaults={"quantity": quantity},
         )
         if not created:
             new_quantity = item.quantity + quantity
-            if new_quantity > product.stock:
+            available = variant.stock if variant else product.stock
+            if new_quantity > available:
                 raise ValidationError("تعداد درخواستی بیش از موجودی انبار است")
             item.quantity = new_quantity
             item.save(update_fields=["quantity", "updated_at"])
@@ -61,20 +73,24 @@ class CartService:
         cart: Cart,
         product_id: int,
         quantity: int,
+        variant_id: int | None = None,
     ) -> CartItem | None:
-        try:
-            item = CartItem.objects.select_related("product").get(
-                cart=cart,
-                product_id=product_id,
-            )
-        except CartItem.DoesNotExist:
+        qs = CartItem.objects.select_related("product", "variant").filter(
+            cart=cart,
+            product_id=product_id,
+        )
+        if variant_id is not None:
+            qs = qs.filter(variant_id=variant_id)
+        item = qs.first()
+        if not item:
             raise ValidationError("کالا در سبد خرید یافت نشد")
 
         if quantity <= 0:
             item.delete()
             return None
 
-        if quantity > item.product.stock:
+        available = item.variant.stock if item.variant else item.product.stock
+        if quantity > available:
             raise ValidationError("تعداد درخواستی بیش از موجودی انبار است")
 
         item.quantity = quantity
@@ -82,8 +98,16 @@ class CartService:
         return item
 
     @classmethod
-    def remove_item(cls, cart: Cart, product_id: int) -> None:
-        CartItem.objects.filter(cart=cart, product_id=product_id).delete()
+    def remove_item(
+        cls,
+        cart: Cart,
+        product_id: int,
+        variant_id: int | None = None,
+    ) -> None:
+        qs = CartItem.objects.filter(cart=cart, product_id=product_id)
+        if variant_id is not None:
+            qs = qs.filter(variant_id=variant_id)
+        qs.delete()
 
     @classmethod
     def clear_cart(cls, cart: Cart) -> None:
@@ -122,16 +146,19 @@ class CartService:
         if not guest_cart:
             return user_cart
 
-        guest_items = list(guest_cart.items.select_related("product"))
+        guest_items = list(guest_cart.items.select_related("product", "variant"))
         for g_item in guest_items:
             product = g_item.product
+            variant = g_item.variant
+            available = variant.stock if variant else product.stock
             u_item, created = CartItem.objects.get_or_create(
                 cart=user_cart,
                 product=product,
-                defaults={"quantity": min(g_item.quantity, product.stock)},
+                variant=variant,
+                defaults={"quantity": min(g_item.quantity, available)},
             )
             if not created:
-                combined = min(u_item.quantity + g_item.quantity, product.stock)
+                combined = min(u_item.quantity + g_item.quantity, available)
                 u_item.quantity = combined
                 u_item.save(update_fields=["quantity", "updated_at"])
 
@@ -145,7 +172,7 @@ class CartService:
     @classmethod
     def get_cart_summary(cls, cart: Cart, request: Any = None) -> dict[str, Any]:
         items_data = []
-        items = cart.items.select_related("product").prefetch_related("product__product_images")
+        items = cart.items.select_related("product", "variant").prefetch_related("product__product_images")
 
         for item in items:
             image_url = None
@@ -155,17 +182,27 @@ class CartService:
                 if request:
                     image_url = request.build_absolute_uri(image_url)
 
+            variant_data = None
+            if item.variant:
+                variant_data = {
+                    "id": item.variant.id,
+                    "title": item.variant.title,
+                    "sku": item.variant.sku,
+                    "price": item.variant.price,
+                }
+
             items_data.append(
                 {
                     "id": item.id,
                     "product_id": item.product.id,
                     "name": item.product.name,
-                    "sku": item.product.sku,
-                    "price": item.product.price,
+                    "sku": item.variant.sku if item.variant else item.product.sku,
+                    "price": item.unit_price,
                     "quantity": item.quantity,
                     "subtotal": item.subtotal,
-                    "stock": item.product.stock,
+                    "stock": item.variant.stock if item.variant else item.product.stock,
                     "image": image_url,
+                    "variant": variant_data,
                 }
             )
 
@@ -190,7 +227,15 @@ class CartService:
                 cart.coupon = None
                 cart.save(update_fields=["coupon"])
 
-        final_price = max(0, total_price - discount_amount)
+        setting = SiteSetting.get_settings()
+        if total_price == 0:
+            shipping_cost = 0
+        elif total_price >= setting.free_shipping_threshold:
+            shipping_cost = 0
+        else:
+            shipping_cost = setting.default_shipping_cost
+
+        final_price = max(0, total_price - discount_amount + shipping_cost)
 
         return {
             "id": cart.id,
@@ -198,6 +243,8 @@ class CartService:
             "total_price": total_price,
             "subtotal": total_price,
             "discount_amount": discount_amount,
+            "shipping_cost": shipping_cost,
+            "free_shipping_threshold": setting.free_shipping_threshold,
             "final_price": final_price,
             "coupon": coupon_data,
             "items": items_data,
