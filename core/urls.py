@@ -80,6 +80,32 @@ urlpatterns = [
     re_path(r"^articles/?$", views.article_list, name="article-list"),
     re_path(r"^articles/(?P<pk>\d+)/?$", views.article_detail, name="article-detail"),
 
+    # Frontend Compatibility Sliders, Category Slides & Section Sliders
+    re_path(r"^home/sliders/?$", views.home_sliders_view, name="home-sliders"),
+    re_path(r"^home/sliders/(?P<pk>\d+)/?$", views.home_slider_detail_view, name="home-slider-detail"),
+    re_path(r"^admin/home/sliders/?$", views.home_sliders_view, name="admin-home-sliders"),
+    re_path(r"^admin/home/sliders/(?P<pk>\d+)/?$", views.home_slider_detail_view, name="admin-home-slider-detail"),
+    re_path(r"^home/category-slides/?$", views.category_slides_view, name="category-slides"),
+    re_path(r"^home/category-slides/(?P<pk>\d+)/?$", views.category_slide_detail_view, name="category-slide-detail"),
+    re_path(r"^admin/category-slides/?$", views.category_slides_view, name="admin-category-slides"),
+    re_path(r"^admin/category-slides/(?P<pk>\d+)/?$", views.category_slide_detail_view, name="admin-category-slide-detail"),
+    re_path(r"^section-sliders/?$", views.section_sliders_view, name="section-sliders"),
+    re_path(r"^section-sliders/(?P<pk>\d+)/?$", views.section_slider_detail_view, name="section-slider-detail"),
+    re_path(r"^admin/section-sliders/?$", views.section_sliders_view, name="admin-section-sliders"),
+    re_path(r"^admin/section-sliders/create/?$", views.section_sliders_view, name="admin-section-sliders-create"),
+    re_path(r"^admin/section-sliders/(?P<pk>\d+)/?$", views.section_slider_detail_view, name="admin-section-slider-detail"),
+
+    # Frontend Notifications / Messages
+    re_path(r"^messages/?$", views.messages_view, name="messages"),
+    re_path(r"^messages/(?P<pk>\d+)/read/?$", views.message_mark_read_view, name="message-mark-read"),
+    re_path(r"^admin/messages/list/?$", views.messages_view, name="admin-messages-list"),
+    re_path(r"^admin/messages/send/?$", views.messages_view, name="admin-messages-send"),
+    re_path(r"^admin/messages/(?P<pk>\d+)/?$", views.message_mark_read_view, name="admin-messages-detail"),
+
+    # Admin Categories
+    re_path(r"^admin/categories/?$", views.admin_categories_view, name="admin-categories"),
+    re_path(r"^admin/categories/(?P<pk>\d+)/?$", views.admin_category_detail_view, name="admin-category-detail"),
+
     # Auth
     re_path(r"^auth/send-code/?$", views.send_code, name="auth-send-code"),
     re_path(r"^auth/verify-code/?$", views.verify_code, name="auth-verify-code"),

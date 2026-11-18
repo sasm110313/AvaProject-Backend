@@ -1912,3 +1912,293 @@ def admin_contact_detail(request: Any, pk: int) -> Response:
         msg.is_responded = bool(request.data["is_responded"])
         msg.save(update_fields=["is_responded"])
     return Response(ContactMessageSerializer(msg).data)
+
+
+# ===========================================================================
+# Frontend Compatibility Views (Sliders, Section Sliders, Messages, Admin Categories)
+# ===========================================================================
+
+@extend_schema(summary="اسلایدرهای صفحه اصلی برای سازگاری با فرانت")
+@api_view(["GET", "POST"])
+@permission_classes([AllowAny])
+@csrf_exempt
+def home_sliders_view(request: Any) -> Response:
+    if request.method == "POST":
+        title = request.data.get("title", "")
+        link = request.data.get("link", "")
+        active = str(request.data.get("active", "true")).lower() in ("true", "1")
+        image = request.FILES.get("image")
+        banner = Banner.objects.create(
+            title=title,
+            link_url=link,
+            is_active=active,
+            banner_type="hero",
+            image=image if image else "banners/hero1.jpg",
+        )
+        return Response(
+            {
+                "id": banner.id,
+                "title": banner.title,
+                "link": banner.link_url,
+                "active": banner.is_active,
+                "image": request.build_absolute_uri(banner.image.url) if banner.image else "",
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    qs = Banner.objects.filter(banner_type="hero")
+    if not qs.exists():
+        qs = Banner.objects.all()
+    if request.query_params.get("active") in ("1", "true"):
+        qs = qs.filter(is_active=True)
+    items = [
+        {
+            "id": b.id,
+            "title": b.title,
+            "image": request.build_absolute_uri(b.image.url) if b.image else "",
+            "link": b.link_url,
+            "active": b.is_active,
+            "order": b.display_order,
+        }
+        for b in qs
+    ]
+    return Response(items)
+
+
+@extend_schema(summary="عملیات روی یک اسلایدر هوم")
+@api_view(["GET", "PUT", "PATCH", "DELETE"])
+@permission_classes([AllowAny])
+@csrf_exempt
+def home_slider_detail_view(request: Any, pk: int) -> Response:
+    banner = Banner.objects.filter(pk=pk).first()
+    if not banner:
+        return Response({"error": "اسلایدر یافت نشد"}, status=status.HTTP_404_NOT_FOUND)
+    if request.method == "DELETE":
+        banner.delete()
+        return Response({"success": True})
+    if "title" in request.data:
+        banner.title = request.data["title"]
+    if "link" in request.data:
+        banner.link_url = request.data["link"]
+    if "active" in request.data:
+        banner.is_active = str(request.data["active"]).lower() in ("true", "1")
+    if "image" in request.FILES:
+        banner.image = request.FILES["image"]
+    banner.save()
+    return Response(
+        {
+            "id": banner.id,
+            "title": banner.title,
+            "link": banner.link_url,
+            "active": banner.is_active,
+            "image": request.build_absolute_uri(banner.image.url) if banner.image else "",
+        }
+    )
+
+
+@extend_schema(summary="اسلایدر دسته‌بندی‌های صفحه اصلی")
+@api_view(["GET", "POST"])
+@permission_classes([AllowAny])
+@csrf_exempt
+def category_slides_view(request: Any) -> Response:
+    if request.method == "POST":
+        title = request.data.get("title", "")
+        category = request.data.get("category", "")
+        link = request.data.get("link", "")
+        active = str(request.data.get("active", "true")).lower() in ("true", "1")
+        order = int(request.data.get("order", 0) or 0)
+        image = request.FILES.get("image")
+        banner = Banner.objects.create(
+            title=title,
+            subtitle=category,
+            link_url=link,
+            is_active=active,
+            display_order=order,
+            banner_type="promo",
+            image=image if image else "banners/promo1.jpg",
+        )
+        return Response(
+            {
+                "id": banner.id,
+                "title": banner.title,
+                "category": banner.subtitle,
+                "link": banner.link_url,
+                "active": banner.is_active,
+                "order": banner.display_order,
+                "image": request.build_absolute_uri(banner.image.url) if banner.image else "",
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    qs = Banner.objects.filter(banner_type="promo")
+    if request.query_params.get("active") in ("1", "true"):
+        qs = qs.filter(is_active=True)
+    items = [
+        {
+            "id": b.id,
+            "title": b.title,
+            "category": b.subtitle or b.title,
+            "image": request.build_absolute_uri(b.image.url) if b.image else "",
+            "link": b.link_url,
+            "active": b.is_active,
+            "order": b.display_order,
+        }
+        for b in qs
+    ]
+    return Response(items)
+
+
+@extend_schema(summary="عملیات اسلایدر دسته‌بندی")
+@api_view(["GET", "PUT", "PATCH", "DELETE"])
+@permission_classes([AllowAny])
+@csrf_exempt
+def category_slide_detail_view(request: Any, pk: int) -> Response:
+    banner = Banner.objects.filter(pk=pk).first()
+    if not banner:
+        return Response({"error": "اسلاید دسته‌بندی یافت نشد"}, status=status.HTTP_404_NOT_FOUND)
+    if request.method == "DELETE":
+        banner.delete()
+        return Response({"success": True})
+    if "title" in request.data:
+        banner.title = request.data["title"]
+    if "category" in request.data:
+        banner.subtitle = request.data["category"]
+    if "link" in request.data:
+        banner.link_url = request.data["link"]
+    if "active" in request.data:
+        banner.is_active = str(request.data["active"]).lower() in ("true", "1")
+    if "order" in request.data:
+        banner.display_order = int(request.data["order"] or 0)
+    if "image" in request.FILES:
+        banner.image = request.FILES["image"]
+    banner.save()
+    return Response(
+        {
+            "id": banner.id,
+            "title": banner.title,
+            "category": banner.subtitle,
+            "link": banner.link_url,
+            "active": banner.is_active,
+            "order": banner.display_order,
+            "image": request.build_absolute_uri(banner.image.url) if banner.image else "",
+        }
+    )
+
+
+@extend_schema(summary="اسلایدرهای بخش‌های خاص (شگفت‌انگیزها، محبوب‌ها)")
+@api_view(["GET", "POST"])
+@permission_classes([AllowAny])
+@csrf_exempt
+def section_sliders_view(request: Any) -> Response:
+    if request.method == "POST":
+        sec = request.data.get("section", "amazing")
+        prod_id = request.data.get("product_id")
+        if prod_id:
+            Product.objects.filter(pk=prod_id).update(is_featured=True)
+        return Response({"success": True, "section": sec, "product_id": prod_id}, status=status.HTTP_201_CREATED)
+
+    section = request.query_params.get("section", "amazing")
+    if section == "amazing":
+        products = (
+            Product.objects.filter(is_active=True)
+            .filter(Q(old_price__gt=F("price")) | Q(is_featured=True))
+            .select_related("category_rel")
+            .prefetch_related("product_images", "variants")
+            .order_by("-id")[:20]
+        )
+    else:
+        products = (
+            Product.objects.filter(is_active=True)
+            .select_related("category_rel")
+            .prefetch_related("product_images", "variants")
+            .order_by("-sales_count", "-views_count", "-rating")[:20]
+        )
+
+    rows = [
+        {
+            "id": p.id,
+            "section": section,
+            "product_id": p.id,
+            "product": ProductSerializer(p, context={"request": request}).data,
+        }
+        for p in products
+    ]
+    return Response(rows)
+
+
+@extend_schema(summary="عملیات اسلایدر بخش")
+@api_view(["PUT", "DELETE"])
+@permission_classes([AllowAny])
+@csrf_exempt
+def section_slider_detail_view(request: Any, pk: int) -> Response:
+    return Response({"success": True})
+
+
+@extend_schema(summary="پیام‌های اعلان کاربر")
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def messages_view(request: Any) -> Response:
+    user = _get_authenticated_user(request)
+    phone = request.query_params.get("phone")
+    if not user and phone:
+        user = User.objects.filter(phone=phone).first()
+
+    if user:
+        notes = Notification.objects.filter(user=user).order_by("-id")[:50]
+        data = [
+            {
+                "id": n.id,
+                "title": n.title,
+                "message": n.message,
+                "created_at": n.created_at.isoformat(),
+                "read": n.is_read,
+                "type": n.notification_type,
+            }
+            for n in notes
+        ]
+        return Response(data)
+    return Response([])
+
+
+@extend_schema(summary="علامت‌گذاری خوانده شدن پیام")
+@api_view(["PATCH"])
+@permission_classes([AllowAny])
+@csrf_exempt
+def message_mark_read_view(request: Any, pk: int) -> Response:
+    Notification.objects.filter(pk=pk).update(is_read=True)
+    return Response({"success": True})
+
+
+@extend_schema(summary="دسته‌بندی‌های پنل ادمین")
+@api_view(["GET", "POST"])
+@permission_classes([AllowAny])
+@csrf_exempt
+def admin_categories_view(request: Any) -> Response:
+    if request.method == "POST":
+        name = request.data.get("name", "").strip()
+        slug = request.data.get("slug", "").strip()
+        if not name:
+            return Response({"error": "نام دسته‌بندی الزامی است"}, status=status.HTTP_400_BAD_REQUEST)
+        cat = Category.objects.create(name=name, slug=slug)
+        return Response(CategorySerializer(cat).data, status=status.HTTP_201_CREATED)
+    cats = Category.objects.all().order_by("display_order", "name")
+    return Response(CategorySerializer(cats, many=True).data)
+
+
+@extend_schema(summary="تغییر یا حذف دسته‌بندی پنل ادمین")
+@api_view(["PUT", "PATCH", "DELETE"])
+@permission_classes([AllowAny])
+@csrf_exempt
+def admin_category_detail_view(request: Any, pk: int) -> Response:
+    cat = Category.objects.filter(pk=pk).first()
+    if not cat:
+        return Response({"error": "دسته‌بندی یافت نشد"}, status=status.HTTP_404_NOT_FOUND)
+    if request.method == "DELETE":
+        cat.delete()
+        return Response({"success": True})
+    if "name" in request.data:
+        cat.name = request.data["name"]
+    if "slug" in request.data:
+        cat.slug = request.data["slug"]
+    cat.save()
+    return Response(CategorySerializer(cat).data)
