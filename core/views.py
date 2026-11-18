@@ -2138,7 +2138,7 @@ def section_slider_detail_view(request: Any, pk: int) -> Response:
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def messages_view(request: Any) -> Response:
-    user = _get_authenticated_user(request)
+    user = request.user if getattr(request, "user", None) and request.user.is_authenticated else None
     phone = request.query_params.get("phone")
     if not user and phone:
         user = User.objects.filter(phone=phone).first()
