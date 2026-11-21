@@ -638,3 +638,19 @@ class Favorite(models.Model):
 
     def __str__(self) -> str:
         return f"{self.user.phone} - {self.product.name}"
+
+
+class PopularSearch(models.Model):
+    term = models.CharField(max_length=255, verbose_name="عبارت جستجو")
+    order = models.IntegerField(default=0, verbose_name="ترتیب نمایش")
+    active = models.BooleanField(default=True, verbose_name="فعال")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="تاریخ ایجاد")
+
+    class Meta:
+        ordering = ["order", "id"]
+        verbose_name = "جستجوی پرطرفدار"
+        verbose_name_plural = "جستجوهای پرطرفدار"
+
+    def __str__(self) -> str:
+        return self.term
+

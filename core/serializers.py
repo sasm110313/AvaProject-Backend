@@ -23,6 +23,7 @@ from core.models import (
     OrderItem,
     OrderStatusHistory,
     PaymentTransaction,
+    PopularSearch,
     Product,
     ProductAnswer,
     ProductImage,
@@ -687,3 +688,10 @@ class ProfileSerializer(serializers.Serializer):
     Email = serializers.EmailField(required=False, allow_blank=True)
     Number = serializers.CharField(max_length=20, required=False, allow_blank=True)
     gender = serializers.CharField(max_length=20, required=False, allow_blank=True)
+
+
+class PopularSearchSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PopularSearch
+        fields = ["id", "term", "order", "active"]
+

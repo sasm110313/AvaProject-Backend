@@ -23,6 +23,7 @@ from core.models import (
     Order,
     OrderStatusHistory,
     PaymentTransaction,
+    PopularSearch,
     Product,
     ProductAnswer,
     ProductQuestion,
@@ -48,6 +49,7 @@ from core.serializers import (
     OrderSerializer,
     OrderStatusHistorySerializer,
     PaymentTransactionSerializer,
+    PopularSearchSerializer,
     ProductAnswerSerializer,
     ProductQuestionSerializer,
     ProductReviewSerializer,
@@ -326,6 +328,40 @@ def product_toggle_featured(request: Any, pk: int) -> Response:
         "is_featured": product.is_featured,
         "Empressive": product.is_featured,
     })
+
+
+@extend_schema(summary="به‌روزرسانی سریع پرچم‌ها یا مشخصات محصول")
+@api_view(["PATCH", "POST"])
+@permission_classes([AllowAny])
+@csrf_exempt
+def product_select(request: Any, pk: int) -> Response:
+    product = Product.objects.filter(pk=pk).first()
+    if not product:
+        return Response({"error": "محصول یافت نشد"}, status=status.HTTP_404_NOT_FOUND)
+
+    data = request.data
+    fields = []
+    for f in ("is_featured", "is_special_offer", "is_best_seller", "is_new_arrival", "is_active"):
+        if f in data:
+            setattr(product, f, bool(data[f]))
+            fields.append(f)
+    if "rating" in data:
+        try:
+            product.rating = float(data["rating"])
+            fields.append("rating")
+        except (ValueError, TypeError):
+            pass
+    if "stock" in data:
+        try:
+            product.stock = int(data["stock"])
+            fields.append("stock")
+        except (ValueError, TypeError):
+            pass
+
+    if fields:
+        product.save(update_fields=fields)
+
+    return Response(ProductSerializer(product, context={"request": request}).data)
 
 
 @extend_schema(summary="عملیات گروهی روی محصولات برای پنل ادمین")
@@ -1087,14 +1123,19 @@ def customer_list(request: Any) -> Response:
     return Response(CustomerSerializer(customers, many=True).data)
 
 
-@extend_schema(summary="مشاهده جزئیات یا ویرایش مشتری در پنل ادمین")
-@api_view(["GET", "PATCH"])
+@extend_schema(summary="مشاهده جزئیات، ویرایش یا حذف مشتری در پنل ادمین")
+@api_view(["GET", "PUT", "PATCH", "DELETE"])
 @permission_classes([AllowAny])
 @csrf_exempt
 def customer_detail(request: Any, pk: int) -> Response:
     user = User.objects.filter(pk=pk).first()
     if not user:
         return Response({"error": "کاربر یافت نشد"}, status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == "DELETE":
+        Order.objects.filter(user=user).update(user=None)
+        user.delete()
+        return Response({"success": True, "kept_orders": True})
 
     if request.method == "GET":
         orders = Order.objects.filter(Q(user=user) | Q(phone=user.phone)).prefetch_related("order_items").order_by("-id")
@@ -1115,6 +1156,20 @@ def customer_detail(request: Any, pk: int) -> Response:
     if "email" in data:
         user.email = str(data["email"]).strip()
     user.save()
+    return Response(CustomerSerializer(user).data)
+
+
+@extend_schema(summary="مسدود یا رفع مسدودیت مشتری")
+@api_view(["PATCH", "POST"])
+@permission_classes([AllowAny])
+@csrf_exempt
+def customer_block(request: Any, pk: int) -> Response:
+    user = User.objects.filter(pk=pk).first()
+    if not user:
+        return Response({"error": "کاربر یافت نشد"}, status=status.HTTP_404_NOT_FOUND)
+    is_blocked = request.data.get("is_blocked", False)
+    user.is_active = not bool(is_blocked)
+    user.save(update_fields=["is_active"])
     return Response(CustomerSerializer(user).data)
 
 
@@ -1159,6 +1214,9 @@ def profile(request: Any) -> Response:
                 "Number": user.phone,
                 "gender": user.gender,
                 "avatar": avatar_url,
+                "IsAdmin": bool(user.is_staff or user.is_superuser),
+                "is_staff": bool(user.is_staff),
+                "is_superuser": bool(user.is_superuser),
             }
         )
 
@@ -1368,18 +1426,47 @@ def send_code(request: Any) -> Response:
         return Response({"error": str(exc.message)}, status=status.HTTP_400_BAD_REQUEST)
 
 
-@extend_schema(summary="بررسی کد تأیید و صدور توکن‌های JWT")
+@extend_schema(summary="بررسی کد تأیید یا رمز عبور و صدور توکن‌های JWT")
 @api_view(["POST"])
 @permission_classes([AllowAny])
 @throttle_classes([OtpVerifyRateThrottle])
 @csrf_exempt
 def verify_code(request: Any) -> Response:
-    phone = request.data.get("phone", "")
-    code = request.data.get("code", "")
+    phone = str(request.data.get("phone", "")).strip()
+    code = str(request.data.get("code", "")).strip()
+    password = str(request.data.get("password", "")).strip()
     session_key = (
         (request.session.session_key if hasattr(request, "session") else None)
         or request.data.get("session_key")
     )
+
+    # Direct password login support (useful for admin access)
+    if password and phone:
+        norm_phone = AuthService.normalize_phone(phone)
+        user = User.objects.filter(phone=norm_phone).first()
+        if user and user.check_password(password):
+            if session_key:
+                from core.services.cart_service import CartService
+                CartService.merge_guest_cart(user, session_key)
+            from rest_framework_simplejwt.tokens import RefreshToken
+            refresh = RefreshToken.for_user(user)
+            return Response(
+                {
+                    "success": True,
+                    "tokens": {
+                        "access": str(refresh.access_token),
+                        "refresh": str(refresh),
+                    },
+                    "customer": CustomerSerializer(user).data,
+                    "IsAdmin": bool(user.is_staff or user.is_superuser),
+                    "is_staff": bool(user.is_staff),
+                    "is_superuser": bool(user.is_superuser),
+                }
+            )
+        elif not user:
+            return Response({"error": "کاربری با این شماره تلفن یافت نشد"}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            return Response({"error": "رمز عبور وارد شده نادرست است"}, status=status.HTTP_400_BAD_REQUEST)
 
     try:
         auth_data = AuthService.verify_otp(phone, code, session_key=session_key)
@@ -1389,6 +1476,9 @@ def verify_code(request: Any) -> Response:
                 "success": True,
                 "tokens": auth_data["tokens"],
                 "customer": CustomerSerializer(user).data,
+                "IsAdmin": bool(user.is_staff or user.is_superuser),
+                "is_staff": bool(user.is_staff),
+                "is_superuser": bool(user.is_superuser),
             }
         )
     except ValidationError as exc:
@@ -2160,6 +2250,86 @@ def messages_view(request: Any) -> Response:
     return Response([])
 
 
+@extend_schema(summary="لیست پیامک‌ها و اعلان‌های ارسالی برای پنل ادمین")
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def admin_messages_list(request: Any) -> Response:
+    notes = Notification.objects.select_related("user").order_by("-id")[:100]
+    data = [
+        {
+            "id": n.id,
+            "customer": (n.user.name if n.user and n.user.name else "کاربر"),
+            "phone": (n.user.phone if n.user else ""),
+            "text": n.message,
+            "is_read": n.is_read,
+            "created_at": n.created_at.isoformat(),
+        }
+        for n in notes
+    ]
+    return Response(data)
+
+
+@extend_schema(summary="ارسال پیامک و اعلان به مشتریان توسط ادمین")
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@csrf_exempt
+def admin_messages_send(request: Any) -> Response:
+    text = str(request.data.get("text", "")).strip()
+    target = request.data.get("target", "all")
+    phones = request.data.get("phones", [])
+
+    if not text:
+        return Response({"error": "متن پیام الزامی است"}, status=status.HTTP_400_BAD_REQUEST)
+
+    from core.services.auth_service import AuthService
+    from core.services.sms_service import SmsService
+
+    target_users = []
+    if target == "all":
+        target_users = list(User.objects.filter(is_active=True).exclude(phone=""))
+    elif isinstance(phones, list) and phones:
+        for p in phones:
+            norm = AuthService.normalize_phone(str(p))
+            user, _ = User.objects.get_or_create(phone=norm, defaults={"name": "کاربر"})
+            target_users.append(user)
+
+    created_count = 0
+    for u in target_users:
+        Notification.objects.create(
+            user=u,
+            title="پیام از طرف فروشگاه آوای انعکاس",
+            message=text,
+            notification_type="general",
+        )
+        created_count += 1
+        try:
+            SmsService.send_sms(phone=u.phone, message=text)
+        except Exception:
+            pass
+
+    return Response({
+        "success": True,
+        "created": created_count,
+        "phones": len(target_users),
+    }, status=status.HTTP_201_CREATED)
+
+
+@extend_schema(summary="علامت‌گذاری یا حذف پیام توسط ادمین")
+@api_view(["PATCH", "DELETE"])
+@permission_classes([AllowAny])
+@csrf_exempt
+def admin_message_detail(request: Any, pk: int) -> Response:
+    note = Notification.objects.filter(pk=pk).first()
+    if not note:
+        return Response({"error": "پیام یافت نشد"}, status=status.HTTP_404_NOT_FOUND)
+    if request.method == "DELETE":
+        note.delete()
+        return Response({"success": True})
+    note.is_read = True
+    note.save(update_fields=["is_read"])
+    return Response({"success": True})
+
+
 @extend_schema(summary="علامت‌گذاری خوانده شدن پیام")
 @api_view(["PATCH"])
 @permission_classes([AllowAny])
@@ -2167,6 +2337,46 @@ def messages_view(request: Any) -> Response:
 def message_mark_read_view(request: Any, pk: int) -> Response:
     Notification.objects.filter(pk=pk).update(is_read=True)
     return Response({"success": True})
+
+
+# ============================================================================
+# POPULAR SEARCHES (جستجوهای پرطرفدار)
+# ============================================================================
+
+@extend_schema(summary="لیست و ایجاد عبارت‌های جستجوی پرطرفدار")
+@api_view(["GET", "POST"])
+@permission_classes([AllowAny])
+@csrf_exempt
+def admin_popular_searches(request: Any) -> Response:
+    if request.method == "POST":
+        serializer = PopularSearchSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    items = PopularSearch.objects.all().order_by("order", "id")
+    return Response(PopularSearchSerializer(items, many=True).data)
+
+
+@extend_schema(summary="ویرایش یا حذف عبارت جستجوی پرطرفدار")
+@api_view(["GET", "PUT", "PATCH", "DELETE"])
+@permission_classes([AllowAny])
+@csrf_exempt
+def admin_popular_search_detail(request: Any, pk: int) -> Response:
+    item = PopularSearch.objects.filter(pk=pk).first()
+    if not item:
+        return Response({"error": "عبارت یافت نشد"}, status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == "DELETE":
+        item.delete()
+        return Response({"success": True})
+
+    serializer = PopularSearchSerializer(item, data=request.data, partial=(request.method == "PATCH"))
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 @extend_schema(summary="دسته‌بندی‌های پنل ادمین")

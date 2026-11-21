@@ -11,6 +11,7 @@ urlpatterns = [
     re_path(r"^products/best-sellers/?$", views.products_best_sellers, name="product-best-sellers"),
     re_path(r"^products/new-arrivals/?$", views.products_new_arrivals, name="product-new-arrivals"),
     re_path(r"^products/(?P<pk>\d+)/toggle-featured/?$", views.product_toggle_featured, name="product-toggle-featured"),
+    re_path(r"^products/(?P<pk>\d+)/select/?$", views.product_select, name="product-select"),
     re_path(r"^products/batch-action/?$", views.product_batch_action, name="product-batch-action"),
     re_path(r"^products/compare/?$", views.compare_products, name="product-compare"),
     re_path(r"^products/(?P<pk>\d+)/?$", views.product_detail, name="product-detail"),
@@ -37,7 +38,9 @@ urlpatterns = [
     # Customers & Profile
     re_path(r"^customers/?$", views.customer_list, name="customer-list"),
     re_path(r"^customers/(?P<pk>\d+)/?$", views.customer_detail, name="customer-detail"),
+    re_path(r"^customers/(?P<pk>\d+)/block/?$", views.customer_block, name="customer-block"),
     re_path(r"^admin/customers/(?P<pk>\d+)/?$", views.customer_detail, name="admin-customer-detail"),
+    re_path(r"^admin/customers/(?P<pk>\d+)/block/?$", views.customer_block, name="admin-customer-block"),
     re_path(r"^me/?$", views.profile, name="profile"),
     re_path(r"^me/orders/?$", views.user_orders, name="user-orders"),
     re_path(r"^me/avatar/?$", views.upload_avatar, name="user-avatar"),
@@ -98,9 +101,13 @@ urlpatterns = [
     # Frontend Notifications / Messages
     re_path(r"^messages/?$", views.messages_view, name="messages"),
     re_path(r"^messages/(?P<pk>\d+)/read/?$", views.message_mark_read_view, name="message-mark-read"),
-    re_path(r"^admin/messages/list/?$", views.messages_view, name="admin-messages-list"),
-    re_path(r"^admin/messages/send/?$", views.messages_view, name="admin-messages-send"),
-    re_path(r"^admin/messages/(?P<pk>\d+)/?$", views.message_mark_read_view, name="admin-messages-detail"),
+    re_path(r"^admin/messages/list/?$", views.admin_messages_list, name="admin-messages-list"),
+    re_path(r"^admin/messages/send/?$", views.admin_messages_send, name="admin-messages-send"),
+    re_path(r"^admin/messages/(?P<pk>\d+)/?$", views.admin_message_detail, name="admin-messages-detail"),
+
+    # Popular Searches
+    re_path(r"^admin/popular-searches/?$", views.admin_popular_searches, name="admin-popular-searches"),
+    re_path(r"^admin/popular-searches/(?P<pk>\d+)/?$", views.admin_popular_search_detail, name="admin-popular-search-detail"),
 
     # Admin Categories
     re_path(r"^admin/categories/?$", views.admin_categories_view, name="admin-categories"),
@@ -109,6 +116,7 @@ urlpatterns = [
     # Auth
     re_path(r"^auth/send-code/?$", views.send_code, name="auth-send-code"),
     re_path(r"^auth/verify-code/?$", views.verify_code, name="auth-verify-code"),
+    re_path(r"^auth/admin-login/?$", views.verify_code, name="auth-admin-login"),
     re_path(r"^auth/logout/?$", views.auth_logout, name="auth-logout"),
     re_path(r"^auth/token/refresh/?$", TokenRefreshView.as_view(), name="token-refresh"),
 
