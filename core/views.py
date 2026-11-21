@@ -1,5 +1,8 @@
+import os
+import subprocess
 from typing import Any
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db.models import Count, F, Q
 from django.http import HttpResponse
@@ -2412,3 +2415,39 @@ def admin_category_detail_view(request: Any, pk: int) -> Response:
         cat.slug = request.data["slug"]
     cat.save()
     return Response(CategorySerializer(cat).data)
+
+
+# ============================================================================
+# AUTOMATED DEPLOYMENT WEBHOOK (استقرار خودکار فرانت‌اند)
+# ============================================================================
+
+@extend_schema(summary="وب‌هوک استقرار خودکار فرانت‌اند از گیت‌هاب")
+@api_view(["POST", "GET"])
+@permission_classes([AllowAny])
+@csrf_exempt
+def deploy_webhook(request: Any) -> Response:
+    secret = (
+        request.query_params.get("secret")
+        or request.headers.get("X-Deploy-Secret")
+        or (request.data.get("secret") if hasattr(request, "data") and isinstance(request.data, dict) else None)
+    )
+    expected_secret = getattr(settings, "DEPLOY_WEBHOOK_SECRET", "AvayEnekasDeployKey2026")
+    if secret != expected_secret:
+        return Response({"error": "کلید امنیتی وب‌هوک معتبر نیست"}, status=status.HTTP_403_FORBIDDEN)
+
+    deploy_script = getattr(settings, "DEPLOY_SCRIPT_PATH", "/var/www/ava/deploy_frontend.sh")
+    if not os.path.exists(deploy_script):
+        return Response(
+            {"error": "اسکریپت استقرار در سرور یافت نشد", "path": deploy_script},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+    import subprocess
+    subprocess.Popen(["bash", deploy_script], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    return Response({
+        "success": True,
+        "message": "فرآیند بیلد و استقرار فرانت‌اند با موفقیت آغاز شد.",
+        "log_path": "/var/log/frontend-deploy.log",
+    })
+

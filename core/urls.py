@@ -128,4 +128,7 @@ urlpatterns = [
     re_path(r"^admin/reviews/(?P<pk>\d+)/?$", views.admin_review_detail, name="admin-review-detail"),
     re_path(r"^admin/contact-messages/?$", views.admin_contact_list, name="admin-contact-list"),
     re_path(r"^admin/contact-messages/(?P<pk>\d+)/?$", views.admin_contact_detail, name="admin-contact-detail"),
+
+    # Automated Deployment Webhook
+    re_path(r"^deploy-webhook/?$", views.deploy_webhook, name="deploy-webhook"),
 ]
