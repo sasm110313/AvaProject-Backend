@@ -39,7 +39,7 @@ class AuthService:
                 SmsService.send_otp(phone, "12345")
             except Exception:
                 pass
-            return {"success": True, "devCode": "12345"}
+            return {"success": True}
 
         recent_otp = (
             OtpCode.objects.filter(phone=phone)
@@ -57,7 +57,7 @@ class AuthService:
         SmsService.send_otp(phone, code)
 
         result: dict[str, Any] = {"success": True}
-        if settings.DEBUG or getattr(settings, "OTP_EXPOSE_DEV_CODE", False):
+        if settings.DEBUG and getattr(settings, "OTP_EXPOSE_DEV_CODE", False):
             result["devCode"] = code
         return result
 
