@@ -137,14 +137,27 @@ class SmsService:
             return log
 
         # --------------------------------------------------------------------
-        # SMS.IR PROVIDER (v1 Verify & Bulk)
+        # SMS.IR PROVIDER (v1 Verify & Line Bulk Fallback)
         # --------------------------------------------------------------------
         if provider == "smsir":
-            smsir_template_id = getattr(settings, "SMSIR_TEMPLATE_ID", 100000)
-            try:
-                # If token or template is provided, use Ultra Fast Verify endpoint
-                if token or template:
-                    tid = int(template) if str(template).isdigit() else int(smsir_template_id or 100000)
+            smsir_template_id = getattr(settings, "SMSIR_TEMPLATE_ID", 0)
+            smsir_line = getattr(settings, "SMSIR_LINE_NUMBER", 500030652867811)
+            candidate_lines = [str(smsir_line)]
+            for backup in ["500030652867811", "300034720521"]:
+                if backup not in candidate_lines:
+                    candidate_lines.append(backup)
+
+            sent_successfully = False
+
+            # 1. Attempt fast Verify pattern if an approved template is configured (> 100000)
+            tid = None
+            if template and str(template).isdigit() and int(template) > 100000:
+                tid = int(template)
+            elif smsir_template_id and int(smsir_template_id) > 100000:
+                tid = int(smsir_template_id)
+
+            if tid:
+                try:
                     param_name = getattr(settings, "SMSIR_TEMPLATE_PARAM_NAME", "Code")
                     verify_payload = {
                         "mobile": phone,
@@ -167,56 +180,64 @@ class SmsService:
                     )
                     with urllib.request.urlopen(req, timeout=8) as response:
                         res_body = json.loads(response.read().decode("utf-8"))
-                        status_code = res_body.get("status")
-                        if status_code == 1:
-                            log.status = "sent"
-                            data_obj = res_body.get("data")
-                            if isinstance(data_obj, dict):
-                                log.provider_msg_id = str(data_obj.get("messageId", ""))
-                        else:
-                            log.status = "failed"
-                            log.error_message = f"SMS.ir error {status_code}: {res_body.get('message', '')}"
-                            logger.error("SMS.ir verify send error for %s: %s", phone, res_body)
-                else:
-                    # Line bulk send
-                    line_num = getattr(settings, "SMSIR_LINE_NUMBER", 300034720521)
-                    bulk_payload = {
-                        "lineNumber": int(line_num),
-                        "messageText": message,
-                        "mobiles": [phone],
-                    }
-                    data_bytes = json.dumps(bulk_payload).encode("utf-8")
-                    req = urllib.request.Request(
-                        "https://api.sms.ir/v1/send/bulk",
-                        data=data_bytes,
-                        headers={
-                            "Content-Type": "application/json",
-                            "Accept": "application/json",
-                            "x-api-key": smsir_key,
-                            "User-Agent": "AvaStore/1.0",
-                        },
-                        method="POST",
-                    )
-                    with urllib.request.urlopen(req, timeout=8) as response:
-                        res_body = json.loads(response.read().decode("utf-8"))
                         if res_body.get("status") == 1:
                             log.status = "sent"
                             data_obj = res_body.get("data")
                             if isinstance(data_obj, dict):
-                                log.provider_msg_id = str(data_obj.get("packId", ""))
+                                log.provider_msg_id = str(data_obj.get("messageId", ""))
+                            log.error_message = ""
+                            sent_successfully = True
                         else:
-                            log.status = "failed"
-                            log.error_message = f"SMS.ir error {res_body.get('status')}: {res_body.get('message', '')}"
-            except urllib.error.HTTPError as exc:
-                err_text = exc.read().decode("utf-8", errors="ignore")
-                logger.error("SMS.ir HTTPError for %s (%s): %s", phone, exc.code, err_text)
-                log.status = "failed"
-                log.error_message = f"HTTP {exc.code}: {err_text}"
-            except Exception as exc:
-                logger.error("SMS.ir exception for %s: %s", phone, exc)
-                log.status = "failed"
-                log.error_message = str(exc)
+                            logger.warning("SMS.ir verify response %s: %s", res_body.get("status"), res_body.get("message"))
+                except Exception as exc:
+                    logger.warning("SMS.ir verify failed for %s, falling back to line bulk: %s", phone, exc)
 
+            # 2. Line Bulk send (Immediate fallback or primary method)
+            if not sent_successfully:
+                for line in candidate_lines:
+                    try:
+                        bulk_payload = {
+                            "lineNumber": str(line),
+                            "messageText": message,
+                            "mobiles": [phone],
+                        }
+                        data_bytes = json.dumps(bulk_payload).encode("utf-8")
+                        req = urllib.request.Request(
+                            "https://api.sms.ir/v1/send/bulk",
+                            data=data_bytes,
+                            headers={
+                                "Content-Type": "application/json",
+                                "Accept": "application/json",
+                                "x-api-key": smsir_key,
+                                "User-Agent": "AvaStore/1.0",
+                            },
+                            method="POST",
+                        )
+                        with urllib.request.urlopen(req, timeout=8) as response:
+                            res_body = json.loads(response.read().decode("utf-8"))
+                            if res_body.get("status") == 1:
+                                log.status = "sent"
+                                data_obj = res_body.get("data")
+                                if isinstance(data_obj, dict):
+                                    msg_ids = data_obj.get("messageIds") or []
+                                    log.provider_msg_id = str(msg_ids[0]) if msg_ids else str(data_obj.get("packId", ""))
+                                log.error_message = ""
+                                sent_successfully = True
+                                break
+                            else:
+                                err_msg = f"Line {line} status {res_body.get('status')}: {res_body.get('message', '')}"
+                                logger.warning("SMS.ir bulk line failed: %s", err_msg)
+                                log.error_message = err_msg
+                    except urllib.error.HTTPError as exc:
+                        err_text = exc.read().decode("utf-8", errors="ignore")
+                        log.error_message = f"Line {line} HTTP {exc.code}: {err_text}"
+                        logger.warning("SMS.ir line %s HTTP %s: %s", line, exc.code, err_text)
+                    except Exception as exc:
+                        log.error_message = f"Line {line} exception: {exc}"
+                        logger.warning("SMS.ir line %s error: %s", line, exc)
+
+            if not sent_successfully:
+                log.status = "failed"
             log.save()
             return log
 
@@ -227,10 +248,10 @@ class SmsService:
     def send_otp(cls, phone: str, code: str) -> SmsLog:
         provider = getattr(settings, "SMS_PROVIDER", "smsir").lower()
         if provider == "smsir":
-            template = str(getattr(settings, "SMSIR_TEMPLATE_ID", 100000))
+            template = str(getattr(settings, "SMSIR_TEMPLATE_ID", 0))
         else:
             template = getattr(settings, "KAVENEGAR_OTP_TEMPLATE", "verify")
-        message = f"کد تایید فروشگاه آوای انعکاس: {code}\nاعتبار: ۱۰ دقیقه"
+        message = f"کد تایید ورود شما به فروشگاه آوای انعکاس: {code}\nاعتبار: ۵ دقیقه"
         return cls.send_sms(phone=phone, message=message, template=template, token=code)
 
     @classmethod

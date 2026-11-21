@@ -313,9 +313,9 @@ OTP_EXPOSE_DEV_CODE = config("OTP_EXPOSE_DEV_CODE", default=DEBUG, cast=bool)
 
 SMS_PROVIDER = config("SMS_PROVIDER", default="smsir")  # smsir, kavenegar, farazsms, console
 SMSIR_API_KEY = config("SMSIR_API_KEY", default="FGc9O4rE6RZLr6x0Av9FF1YDHxUg2FuJX3Y2kzTrkQ98ZzQL")
-SMSIR_TEMPLATE_ID = config("SMSIR_TEMPLATE_ID", default=100000, cast=int)
+SMSIR_TEMPLATE_ID = config("SMSIR_TEMPLATE_ID", default=0, cast=int)
 SMSIR_TEMPLATE_PARAM_NAME = config("SMSIR_TEMPLATE_PARAM_NAME", default="Code")
-SMSIR_LINE_NUMBER = config("SMSIR_LINE_NUMBER", default=300034720521, cast=int)
+SMSIR_LINE_NUMBER = config("SMSIR_LINE_NUMBER", default=500030652867811, cast=int)
 
 KAVENEGAR_API_KEY = config("KAVENEGAR_API_KEY", default="")
 KAVENEGAR_SENDER = config("KAVENEGAR_SENDER", default="")
